@@ -858,4 +858,8 @@ el("btn-load-history").addEventListener("click", async () => {
   }
 });
 
+api("/api/version")
+  .then((res) => { el("app-version").textContent = `Version: ${res.version}`; })
+  .catch(() => { /* Versionsanzeige ist rein informativ, kein Fehler-Toast noetig */ });
+
 loadAll();

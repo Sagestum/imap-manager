@@ -24,7 +24,9 @@ services:
       - proxy
 
   fdm-runner:
-    build: ./runner
+    build:
+      context: .
+      dockerfile: runner/Dockerfile
     image: imap-manager-runner:latest
     container_name: fdm-runner
     restart: unless-stopped

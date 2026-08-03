@@ -4,7 +4,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends fdm cron util-linux ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY entrypoint.sh /entrypoint.sh
+COPY runner/entrypoint.sh /entrypoint.sh
+COPY VERSION /VERSION
 RUN chmod +x /entrypoint.sh
 
 ENV FDM_CONFIG_DIR=/app/config \

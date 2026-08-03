@@ -19,6 +19,15 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_FILE = DATA_DIR / "config.json"
 
+try:
+    VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip()
+except OSError:
+    VERSION = "unknown"
+
+# Laeuft auch unter gunicorn (kein "if __name__" noetig), damit sich beim
+# Deploy pruefen laesst, ob wirklich das neu gebaute Image aktiv ist.
+print(f"[imap-manager] Version: {VERSION}", flush=True)
+
 app = Flask(__name__)
 
 import json
@@ -151,6 +160,11 @@ def index():
 @app.route("/api/config", methods=["GET"])
 def get_config():
     return jsonify(load_config())
+
+
+@app.route("/api/version", methods=["GET"])
+def version():
+    return jsonify({"version": VERSION})
 
 
 # ---------- Accounts ----------

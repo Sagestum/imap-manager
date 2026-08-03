@@ -12,6 +12,9 @@ log() {
     echo "$(date -Iseconds) [fdm-runner] $*"
 }
 
+VERSION="$(cat /VERSION 2>/dev/null || echo unknown)"
+log "fdm-runner Version: $VERSION"
+
 # Fuehrt fdm einmal aus, Konto fuer Konto nacheinander (statt alle parallel,
 # was fdm standardmaessig tut). Einige IMAP-Server antworten bei vielen
 # gleichzeitigen Verbindungen von fdm mit "BAD Could not parse command";
