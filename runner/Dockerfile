@@ -11,20 +11,32 @@ ARG FDM_GIT_REF=0918b78a82a789d63cebe44b7662f0a8dc603000
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git ca-certificates build-essential autoconf automake bison pkg-config \
-        libtdb-dev zlib1g-dev libssl-dev \
+        libtdb-dev zlib1g-dev libssl-dev patch \
         cron util-linux \
     && rm -rf /var/lib/apt/lists/*
+
+# fdm's deliver-imap.c has a Gmail-specific size workaround (triggered by the
+# server's XYZZY capability) that sends the pre-header-insertion message size
+# instead of the correctly computed one, so it undercounts the IMAP APPEND
+# literal by however many bytes fdm's own "Received: by ... (fdm ...)" line
+# adds - the server then reads exactly the declared (too-short) byte count
+# and treats what's left over as the start of the next command, which it
+# can't parse: "3 BAD Could not parse command". Confirmed against a real
+# Gmail delivery. Patch removes that special case, falling back to the
+# general (correct) CRLF-aware size calculation for all servers.
+COPY runner/patches/fdm-xyzzy-append-size.patch /tmp/fdm-xyzzy-append-size.patch
 
 RUN git init /usr/src/fdm \
     && cd /usr/src/fdm \
     && git fetch --depth 1 https://github.com/nicm/fdm.git "$FDM_GIT_REF" \
     && git checkout FETCH_HEAD \
+    && patch -p1 < /tmp/fdm-xyzzy-append-size.patch \
     && ./autogen.sh \
     && ./configure \
     && make \
     && make install \
     && cd / \
-    && rm -rf /usr/src/fdm
+    && rm -rf /usr/src/fdm /tmp/fdm-xyzzy-append-size.patch
 
 # fdm faellt fuer die eigentliche Fetch-Arbeit per Privilege-Separation auf
 # einen unprivilegierten Nutzer "_fdm" zurueck (compiled-in default in diesem
