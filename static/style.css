@@ -89,6 +89,16 @@ input:focus, select:focus {
 input[type="text"], input[type="password"] { flex: 1 1 160px; }
 input[type="number"] { width: 90px; }
 
+.folder-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  flex: 1 1 100%;
+}
+.folder-field input[type="text"] { flex: 1 1 220px; }
+.folder-field select { flex: 1 1 220px; }
+
 .form-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; width: 100%; }
 
 button {

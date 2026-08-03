@@ -1,10 +1,14 @@
 """Leichtgewichtiges Webinterface zur visuellen Verwaltung einer fdm.conf."""
+import imaplib
 import os
+import re
+import socket
 import stat
 import uuid
 from pathlib import Path
 
 from flask import Flask, jsonify, request, render_template, send_file, abort
+from werkzeug.exceptions import HTTPException
 import io
 
 from fdm_gen import generate_conf, validate_config
@@ -16,6 +20,14 @@ DATA_FILE = DATA_DIR / "config.json"
 app = Flask(__name__)
 
 import json
+
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(exc):
+    response = exc.get_response()
+    response.data = json.dumps({"description": exc.description})
+    response.content_type = "application/json"
+    return response
 
 _LOCK_FREE_DEFAULT = {"accounts": [], "actions": [], "rules": []}
 
@@ -214,6 +226,84 @@ def delete_action(action_id):
         abort(404, description="Action nicht gefunden.")
     save_config(config)
     return "", 204
+
+
+# ---------- IMAP-Ordner durchsuchen ----------
+
+IMAP_LIST_RE = re.compile(
+    rb'^\((?P<flags>[^)]*)\)\s+(?:"(?P<delim>[^"]*)"|NIL)\s+(?P<name>.+)$'
+)
+
+
+def _decode_mailbox_name(raw):
+    name = raw.strip()
+    if name.startswith(b'"') and name.endswith(b'"'):
+        name = name[1:-1]
+    return name.decode("utf-8", errors="replace")
+
+
+def _parse_list_line(raw):
+    if raw is None:
+        return None
+    if isinstance(raw, tuple):
+        raw = raw[0]
+    match = IMAP_LIST_RE.match(raw)
+    if not match:
+        return None
+    delim = match.group("delim")
+    return {
+        "name": _decode_mailbox_name(match.group("name")),
+        "delimiter": delim.decode(errors="replace") if delim is not None else "",
+        "flags": match.group("flags").decode(errors="replace"),
+    }
+
+
+def list_imap_folders(conn_type, server, port, user, password):
+    if conn_type == "imaps":
+        conn = imaplib.IMAP4_SSL(server, port, timeout=10)
+    else:
+        conn = imaplib.IMAP4(server, port, timeout=10)
+        try:
+            conn.starttls()
+        except imaplib.IMAP4.error:
+            pass  # Server bietet kein STARTTLS an, weiter mit Klartextverbindung
+
+    try:
+        conn.login(user, password)
+        typ, data = conn.list()
+        if typ != "OK":
+            raise imaplib.IMAP4.error("IMAP LIST fehlgeschlagen.")
+        folders = [f for f in (_parse_list_line(raw) for raw in data) if f]
+        folders.sort(key=lambda f: f["name"].lower())
+        return folders
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
+
+
+@app.route("/api/imap/folders", methods=["POST"])
+def imap_folders():
+    payload = request.get_json(force=True) or {}
+    require_fields(payload, ["type", "server", "user", "pass"])
+    if payload["type"] not in ACTION_TYPES:
+        abort(400, description="Ungueltiger IMAP-Typ.")
+    port = parse_port(payload)
+
+    try:
+        folders = list_imap_folders(
+            payload["type"], payload["server"].strip(), port,
+            payload["user"].strip(), payload["pass"],
+        )
+    except imaplib.IMAP4.error as exc:
+        abort(502, description=f"IMAP-Anmeldung fehlgeschlagen: {exc}")
+    except (socket.timeout, TimeoutError):
+        abort(502, description="Zeitueberschreitung bei der Verbindung zum IMAP-Server.")
+    except (socket.gaierror, ConnectionRefusedError, OSError) as exc:
+        abort(502, description=f"Verbindung zum IMAP-Server fehlgeschlagen: {exc}")
+
+    return jsonify({"folders": folders})
 
 
 # ---------- Rules ----------

@@ -62,7 +62,11 @@
       <input type="number" name="port" placeholder="Port" min="1" max="65535" required>
       <input type="text" name="user" placeholder="Benutzername" required>
       <input type="password" name="pass" placeholder="Passwort" required>
-      <input type="text" name="folder" placeholder="Ziel-Ordner (z.B. INBOX.Newsletter)" required>
+      <div class="folder-field">
+        <input type="text" name="folder" placeholder="Ziel-Ordner (z.B. INBOX.Newsletter)" required>
+        <button type="button" id="btn-load-folders" class="secondary">Ordner laden</button>
+        <select id="folder-select" style="display:none;"></select>
+      </div>
       <div class="form-actions">
         <button type="submit">Action speichern</button>
         <button type="button" class="secondary" data-cancel="action">Abbrechen</button>

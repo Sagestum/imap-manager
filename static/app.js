@@ -45,6 +45,11 @@ function resetForm(form, name) {
   form.querySelector('[name="id"]').value = "";
   form.dataset.editing = "";
   if (name === "rule") updateRuleFormVisibility();
+  if (name === "action") {
+    const select = el("folder-select");
+    select.style.display = "none";
+    select.innerHTML = "";
+  }
 }
 
 // ---------- Load & render ----------
@@ -237,10 +242,52 @@ actionForm.addEventListener("submit", async (e) => {
       await api("/api/actions", { method: "POST", body: JSON.stringify(data) });
       toast("Action angelegt.", "success");
     }
-    resetForm(actionForm);
+    resetForm(actionForm, "action");
     await loadAll();
   } catch (err) {
     toast(err.message, "error");
+  }
+});
+
+el("btn-load-folders").addEventListener("click", async () => {
+  const data = formToObject(actionForm);
+  if (!data.server || !data.user || !data.pass || !data.port) {
+    toast("Bitte zuerst Server, Port, Benutzer und Passwort ausfuellen.", "error");
+    return;
+  }
+  const btn = el("btn-load-folders");
+  const select = el("folder-select");
+  btn.disabled = true;
+  btn.textContent = "Lade ...";
+  try {
+    const res = await api("/api/imap/folders", {
+      method: "POST",
+      body: JSON.stringify({
+        type: data.type, server: data.server, port: data.port,
+        user: data.user, pass: data.pass,
+      }),
+    });
+    select.innerHTML = '<option value="">Ordner waehlen ...</option>';
+    for (const folder of res.folders) {
+      if (folder.flags.includes("\\Noselect")) continue;
+      const opt = document.createElement("option");
+      opt.value = folder.name;
+      opt.textContent = folder.name;
+      select.appendChild(opt);
+    }
+    select.style.display = "";
+    toast(`${res.folders.length} Ordner gefunden.`, "success");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Ordner laden";
+  }
+});
+
+el("folder-select").addEventListener("change", (e) => {
+  if (e.target.value) {
+    actionForm.querySelector('[name="folder"]').value = e.target.value;
   }
 });
 
