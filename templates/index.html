@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fdm.conf Manager</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>fdm.conf Manager</h1>
+  <p class="subtitle">Visuelle Verwaltung von Accounts, Actions und Filterregeln fuer fdm</p>
+</header>
+
+<main>
+  <!-- ACCOUNTS -->
+  <section class="card">
+    <h2>Quell-Konten (Accounts)</h2>
+    <table id="accounts-table">
+      <thead>
+        <tr><th>Name</th><th>Typ</th><th>Server</th><th>Port</th><th>Benutzer</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <form id="account-form" class="entity-form">
+      <input type="hidden" name="id">
+      <input type="text" name="name" placeholder="Account-Name (z.B. privat_gmx)" required>
+      <select name="type" required>
+        <option value="pop3">pop3</option>
+        <option value="pop3s">pop3s</option>
+        <option value="imap">imap</option>
+        <option value="imaps">imaps</option>
+      </select>
+      <input type="text" name="server" placeholder="Server (z.B. pop.gmx.net)" required>
+      <input type="number" name="port" placeholder="Port" min="1" max="65535" required>
+      <input type="text" name="user" placeholder="Benutzername" required>
+      <input type="password" name="pass" placeholder="Passwort" required>
+      <div class="form-actions">
+        <button type="submit">Account speichern</button>
+        <button type="button" class="secondary" data-cancel="account">Abbrechen</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ACTIONS -->
+  <section class="card">
+    <h2>Ziel-Aktionen (Destinations / IMAP-Append)</h2>
+    <table id="actions-table">
+      <thead>
+        <tr><th>Name</th><th>Typ</th><th>Server</th><th>Port</th><th>Benutzer</th><th>Ordner</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <form id="action-form" class="entity-form">
+      <input type="hidden" name="id">
+      <input type="text" name="name" placeholder="Action-Name (z.B. to_newsletter)" required>
+      <select name="type" required>
+        <option value="imap">imap</option>
+        <option value="imaps">imaps</option>
+      </select>
+      <input type="text" name="server" placeholder="Server (z.B. imap.ziel-provider.de)" required>
+      <input type="number" name="port" placeholder="Port" min="1" max="65535" required>
+      <input type="text" name="user" placeholder="Benutzername" required>
+      <input type="password" name="pass" placeholder="Passwort" required>
+      <input type="text" name="folder" placeholder="Ziel-Ordner (z.B. INBOX.Newsletter)" required>
+      <div class="form-actions">
+        <button type="submit">Action speichern</button>
+        <button type="button" class="secondary" data-cancel="action">Abbrechen</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- RULES -->
+  <section class="card">
+    <h2>Filter-Regeln (Rules)</h2>
+    <p class="hint">Reihenfolge per Drag &amp; Drop oder Pfeiltasten aendern. Regeln werden von oben nach unten geprueft; die Catch-All-Regel greift zuletzt.</p>
+    <ul id="rules-list"></ul>
+    <form id="rule-form" class="entity-form">
+      <input type="hidden" name="id">
+      <select name="field" required>
+        <option value="from">Absender (From)</option>
+        <option value="subject">Betreff (Subject)</option>
+        <option value="header">Beliebiger Header</option>
+        <option value="all">Catch-All (alle uebrigen Mails)</option>
+      </select>
+      <input type="text" name="header_name" placeholder='Headername (z.B. List-Unsubscribe)'>
+      <select name="match_type">
+        <option value="contains">Enthaelt String</option>
+        <option value="exact">Exakte Uebereinstimmung</option>
+        <option value="regex">Regulaerer Ausdruck</option>
+      </select>
+      <input type="text" name="value" placeholder="Wert / Regex">
+      <select name="action_id" required>
+        <option value="">Ziel-Action waehlen ...</option>
+      </select>
+      <div class="form-actions">
+        <button type="submit">Regel speichern</button>
+        <button type="button" class="secondary" data-cancel="rule">Abbrechen</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- PREVIEW / EXPORT -->
+  <section class="card">
+    <h2>Vorschau &amp; Export</h2>
+    <div id="warnings"></div>
+    <pre id="preview"></pre>
+    <div class="form-actions">
+      <button id="btn-refresh-preview" type="button">Vorschau aktualisieren</button>
+      <button id="btn-download" type="button">fdm.conf herunterladen</button>
+      <button id="btn-save-export" type="button">In Export-Verzeichnis speichern</button>
+      <button id="btn-save-home" type="button">Speichern unter ~/.fdm.conf</button>
+      <button id="btn-save-etc" type="button" class="danger">Speichern unter /etc/fdm.conf</button>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
