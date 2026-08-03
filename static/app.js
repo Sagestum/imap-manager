@@ -2,11 +2,17 @@
 
 const state = { accounts: [], actions: [], rules: [] };
 let currentSourceFolders = [];
+let currentDestFolders = [];
 
 const el = (id) => document.getElementById(id);
 const accountForm = el("account-form");
 const actionForm = el("action-form");
-const ruleForm = el("rule-form");
+const exceptionForm = el("exception-form");
+const mappingForm = el("mapping-form");
+const catchallForm = el("catchall-form");
+
+const EXCEPTION_FIELDS = ["from", "subject", "header"];
+const isExceptionField = (field) => EXCEPTION_FIELDS.includes(field);
 
 // ---------- Helpers ----------
 
@@ -37,20 +43,77 @@ async function api(path, options = {}) {
 }
 
 function formToObject(form) {
-  const data = Object.fromEntries(new FormData(form).entries());
-  return data;
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function makeButton(label, handler, danger = false) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = label;
+  btn.className = danger ? "danger" : "secondary";
+  btn.style.marginLeft = "0.3rem";
+  btn.addEventListener("click", handler);
+  return btn;
+}
+
+function makeIconButton(label, handler, disabled = false) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = label;
+  btn.className = "icon-btn";
+  btn.disabled = disabled;
+  btn.addEventListener("click", handler);
+  return btn;
+}
+
+function accountsWithFolders() {
+  return state.accounts.filter((a) => (a.source_folders || []).length);
+}
+
+function actionsWithFolders() {
+  return state.actions.filter((a) => (a.dest_folders || []).length);
+}
+
+function populateSelect(select, items, placeholder) {
+  const current = select.value;
+  select.innerHTML = `<option value="">${placeholder}</option>`;
+  for (const item of items) {
+    const opt = document.createElement("option");
+    opt.value = item.id;
+    opt.textContent = item.name;
+    select.appendChild(opt);
+  }
+  select.value = current;
+}
+
+function updateDependentFolderSelect(parentSelect, folderSelect, getItems, getFolders) {
+  const current = folderSelect.value;
+  const item = getItems().find((i) => i.id === parentSelect.value);
+  folderSelect.innerHTML = '<option value="">Ordner waehlen ...</option>';
+  for (const folder of (item ? getFolders(item) : []) || []) {
+    const opt = document.createElement("option");
+    opt.value = folder;
+    opt.textContent = folder;
+    folderSelect.appendChild(opt);
+  }
+  folderSelect.value = current;
+}
+
+function resetDependentFolderSelect(select) {
+  select.innerHTML = '<option value="">Ordner waehlen ...</option>';
 }
 
 function resetForm(form, name) {
   form.reset();
-  form.querySelector('[name="id"]').value = "";
-  form.dataset.editing = "";
-  if (name === "rule") updateRuleFormVisibility();
-  if (name === "action") {
-    const select = el("folder-select");
-    select.style.display = "none";
-    select.innerHTML = "";
-  }
+  const idField = form.querySelector('[name="id"]');
+  if (idField) idField.value = "";
+
   if (name === "account") {
     currentSourceFolders = [];
     renderSourceFolderChips();
@@ -59,19 +122,35 @@ function resetForm(form, name) {
     el("btn-add-source-folder").style.display = "none";
     updateAccountFolderFieldVisibility();
   }
+  if (name === "action") {
+    currentDestFolders = [];
+    renderDestFolderChips();
+    el("dest-folder-select").style.display = "none";
+    el("dest-folder-select").innerHTML = "";
+    el("btn-add-dest-folder").style.display = "none";
+  }
+  if (name === "exception") {
+    updateExceptionFormVisibility();
+    resetDependentFolderSelect(exceptionForm.querySelector('[name="dest_folder"]'));
+  }
+  if (name === "mapping") {
+    resetDependentFolderSelect(mappingForm.querySelector('[name="source_folder"]'));
+    resetDependentFolderSelect(mappingForm.querySelector('[name="dest_folder"]'));
+  }
 }
 
 // ---------- Load & render ----------
 
 async function loadAll() {
-  state.accounts = [];
-  state.actions = [];
-  state.rules = [];
   const config = await api("/api/config");
-  Object.assign(state, config);
+  state.accounts = config.accounts;
+  state.actions = config.actions;
+  state.rules = config.rules;
   renderAccounts();
   renderActions();
-  renderRules();
+  renderExceptions();
+  renderMappings();
+  renderCatchall();
   refreshPreview();
 }
 
@@ -95,24 +174,19 @@ function renderAccounts() {
     tbody.appendChild(tr);
   }
 
-  const sourceAccountSelect = ruleForm.querySelector('[name="source_account_id"]');
-  const currentSourceAccount = sourceAccountSelect.value;
-  sourceAccountSelect.innerHTML = '<option value="">Quell-Konto waehlen ...</option>';
-  for (const acc of state.accounts) {
-    if (!(acc.source_folders || []).length) continue;
-    const opt = document.createElement("option");
-    opt.value = acc.id;
-    opt.textContent = acc.name;
-    sourceAccountSelect.appendChild(opt);
-  }
-  sourceAccountSelect.value = currentSourceAccount;
-  updateSourceFolderOptions();
+  const mappingAccountSelect = mappingForm.querySelector('[name="source_account_id"]');
+  populateSelect(mappingAccountSelect, accountsWithFolders(), "Quell-Konto waehlen ...");
+  updateDependentFolderSelect(
+    mappingAccountSelect, mappingForm.querySelector('[name="source_folder"]'),
+    accountsWithFolders, (a) => a.source_folders,
+  );
 }
 
 function renderActions() {
   const tbody = document.querySelector("#actions-table tbody");
   tbody.innerHTML = "";
   for (const act of state.actions) {
+    const folders = act.dest_folders || [];
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${escapeHtml(act.name)}</td>
@@ -120,7 +194,7 @@ function renderActions() {
       <td>${escapeHtml(act.server)}</td>
       <td>${act.port}</td>
       <td>${escapeHtml(act.user)}</td>
-      <td>${escapeHtml(act.folder)}</td>
+      <td>${folders.length ? escapeHtml(folders.join(", ")) : "<em>(keine)</em>"}</td>
       <td></td>`;
     const actionsTd = tr.querySelector("td:last-child");
     actionsTd.appendChild(makeButton("Bearbeiten", () => editAction(act)));
@@ -128,93 +202,17 @@ function renderActions() {
     tbody.appendChild(tr);
   }
 
-  const select = ruleForm.querySelector('[name="action_id"]');
-  const current = select.value;
-  select.innerHTML = '<option value="">Ziel-Action waehlen ...</option>';
-  for (const act of state.actions) {
-    const opt = document.createElement("option");
-    opt.value = act.id;
-    opt.textContent = act.name;
-    select.appendChild(opt);
+  for (const form of [exceptionForm, mappingForm, catchallForm]) {
+    const destSelect = form.querySelector('[name="dest_action_id"]');
+    populateSelect(destSelect, actionsWithFolders(), "Ziel-Server waehlen ...");
+    updateDependentFolderSelect(
+      destSelect, form.querySelector('[name="dest_folder"]'),
+      actionsWithFolders, (a) => a.dest_folders,
+    );
   }
-  select.value = current;
 }
 
-function ruleLabel(rule) {
-  const action = state.actions.find((a) => a.id === rule.action_id);
-  const actionName = action ? action.name : "?";
-  if (rule.field === "all") {
-    return `<strong>Catch-All</strong> &rarr; <code>${escapeHtml(actionName)}</code>`;
-  }
-  if (rule.field === "source") {
-    const sourceAccount = state.accounts.find((a) => a.id === rule.source_account_id);
-    const accountLabel = sourceAccount ? sourceAccount.name : "?";
-    return `Quelle <code>${escapeHtml(accountLabel)} · ${escapeHtml(rule.source_folder || "?")}</code> &rarr; <code>${escapeHtml(actionName)}</code>`;
-  }
-  const fieldLabel = { from: "From", subject: "Subject", header: rule.header_name }[rule.field];
-  const matchLabel = { contains: "enthaelt", exact: "exakt", regex: "regex" }[rule.match_type];
-  return `<code>${escapeHtml(fieldLabel)}</code> ${matchLabel} <code>${escapeHtml(rule.value)}</code> &rarr; <code>${escapeHtml(actionName)}</code>`;
-}
-
-function renderRules() {
-  const list = el("rules-list");
-  list.innerHTML = "";
-  state.rules.forEach((rule, idx) => {
-    const li = document.createElement("li");
-    li.className = "rule-item" + (rule.field === "all" ? " catchall" : "");
-    li.draggable = true;
-    li.dataset.id = rule.id;
-
-    const handle = document.createElement("span");
-    handle.className = "drag-handle";
-    handle.textContent = "☰";
-
-    const body = document.createElement("span");
-    body.className = "rule-body";
-    body.innerHTML = ruleLabel(rule);
-
-    const actionsSpan = document.createElement("span");
-    actionsSpan.className = "rule-actions";
-    actionsSpan.appendChild(makeIconButton("↑", () => moveRule(idx, -1), idx === 0));
-    actionsSpan.appendChild(makeIconButton("↓", () => moveRule(idx, 1), idx === state.rules.length - 1));
-    actionsSpan.appendChild(makeButton("Bearbeiten", () => editRule(rule)));
-    actionsSpan.appendChild(makeButton("Loeschen", () => deleteRule(rule), true));
-
-    li.appendChild(handle);
-    li.appendChild(body);
-    li.appendChild(actionsSpan);
-    list.appendChild(li);
-  });
-  attachDragHandlers();
-}
-
-function makeButton(label, handler, danger = false) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.textContent = label;
-  btn.className = danger ? "danger" : "secondary";
-  btn.style.marginLeft = "0.3rem";
-  btn.addEventListener("click", handler);
-  return btn;
-}
-
-function makeIconButton(label, handler, disabled = false) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.textContent = label;
-  btn.className = "icon-btn";
-  btn.disabled = disabled;
-  btn.addEventListener("click", handler);
-  return btn;
-}
-
-function escapeHtml(str) {
-  return String(str ?? "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
-// ---------- Accounts CRUD ----------
+// ---------- Quell-Konten CRUD ----------
 
 accountForm.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -224,10 +222,10 @@ accountForm.addEventListener("submit", async (e) => {
   try {
     if (id) {
       await api(`/api/accounts/${id}`, { method: "PUT", body: JSON.stringify(data) });
-      toast("Account aktualisiert.", "success");
+      toast("Konto aktualisiert.", "success");
     } else {
       await api("/api/accounts", { method: "POST", body: JSON.stringify(data) });
-      toast("Account angelegt.", "success");
+      toast("Konto angelegt.", "success");
     }
     resetForm(accountForm, "account");
     await loadAll();
@@ -248,43 +246,58 @@ function updateAccountFolderFieldVisibility() {
 
 accountForm.querySelector('[name="type"]').addEventListener("change", updateAccountFolderFieldVisibility);
 
-function renderSourceFolderChips() {
-  const box = el("source-folders-chips");
+function renderChips(containerId, items, onRemove) {
+  const box = el(containerId);
   box.innerHTML = "";
-  for (const folder of currentSourceFolders) {
+  for (const item of items) {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = folder;
+    chip.textContent = item;
     const remove = document.createElement("button");
     remove.type = "button";
     remove.textContent = "×";
-    remove.addEventListener("click", () => {
-      currentSourceFolders = currentSourceFolders.filter((f) => f !== folder);
-      renderSourceFolderChips();
-    });
+    remove.addEventListener("click", () => onRemove(item));
     chip.appendChild(remove);
     box.appendChild(chip);
   }
 }
 
-el("btn-load-source-folders").addEventListener("click", async () => {
-  const data = formToObject(accountForm);
+function renderSourceFolderChips() {
+  renderChips("source-folders-chips", currentSourceFolders, (folder) => {
+    currentSourceFolders = currentSourceFolders.filter((f) => f !== folder);
+    renderSourceFolderChips();
+  });
+}
+
+function renderDestFolderChips() {
+  renderChips("dest-folders-chips", currentDestFolders, (folder) => {
+    currentDestFolders = currentDestFolders.filter((f) => f !== folder);
+    renderDestFolderChips();
+  });
+}
+
+async function fetchFolders(data) {
   if (!data.server || !data.user || !data.pass || !data.port) {
     toast("Bitte zuerst Server, Port, Benutzer und Passwort ausfuellen.", "error");
-    return;
+    return null;
   }
+  return api("/api/imap/folders", {
+    method: "POST",
+    body: JSON.stringify({
+      type: data.type, server: data.server, port: data.port,
+      user: data.user, pass: data.pass,
+    }),
+  });
+}
+
+el("btn-load-source-folders").addEventListener("click", async () => {
   const btn = el("btn-load-source-folders");
   const select = el("source-folder-select");
   btn.disabled = true;
   btn.textContent = "Lade ...";
   try {
-    const res = await api("/api/imap/folders", {
-      method: "POST",
-      body: JSON.stringify({
-        type: data.type, server: data.server, port: data.port,
-        user: data.user, pass: data.pass,
-      }),
-    });
+    const res = await fetchFolders(formToObject(accountForm));
+    if (!res) return;
     select.innerHTML = "";
     for (const folder of res.folders) {
       if (folder.flags.includes("\\Noselect")) continue;
@@ -305,8 +318,7 @@ el("btn-load-source-folders").addEventListener("click", async () => {
 });
 
 el("btn-add-source-folder").addEventListener("click", () => {
-  const select = el("source-folder-select");
-  const folder = select.value;
+  const folder = el("source-folder-select").value;
   if (folder && !currentSourceFolders.includes(folder)) {
     currentSourceFolders.push(folder);
     renderSourceFolderChips();
@@ -328,29 +340,30 @@ function editAccount(acc) {
 }
 
 async function deleteAccount(acc) {
-  if (!confirm(`Account "${acc.name}" wirklich loeschen?`)) return;
+  if (!confirm(`Konto "${acc.name}" wirklich loeschen?`)) return;
   try {
     await api(`/api/accounts/${acc.id}`, { method: "DELETE" });
-    toast("Account geloescht.", "success");
+    toast("Konto geloescht.", "success");
     await loadAll();
   } catch (err) {
     toast(err.message, "error");
   }
 }
 
-// ---------- Actions CRUD ----------
+// ---------- Ziel-Server CRUD ----------
 
 actionForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const data = formToObject(actionForm);
+  data.dest_folders = currentDestFolders;
   const id = data.id;
   try {
     if (id) {
       await api(`/api/actions/${id}`, { method: "PUT", body: JSON.stringify(data) });
-      toast("Action aktualisiert.", "success");
+      toast("Ziel-Server aktualisiert.", "success");
     } else {
       await api("/api/actions", { method: "POST", body: JSON.stringify(data) });
-      toast("Action angelegt.", "success");
+      toast("Ziel-Server angelegt.", "success");
     }
     resetForm(actionForm, "action");
     await loadAll();
@@ -359,25 +372,15 @@ actionForm.addEventListener("submit", async (e) => {
   }
 });
 
-el("btn-load-folders").addEventListener("click", async () => {
-  const data = formToObject(actionForm);
-  if (!data.server || !data.user || !data.pass || !data.port) {
-    toast("Bitte zuerst Server, Port, Benutzer und Passwort ausfuellen.", "error");
-    return;
-  }
-  const btn = el("btn-load-folders");
-  const select = el("folder-select");
+el("btn-load-dest-folders").addEventListener("click", async () => {
+  const btn = el("btn-load-dest-folders");
+  const select = el("dest-folder-select");
   btn.disabled = true;
   btn.textContent = "Lade ...";
   try {
-    const res = await api("/api/imap/folders", {
-      method: "POST",
-      body: JSON.stringify({
-        type: data.type, server: data.server, port: data.port,
-        user: data.user, pass: data.pass,
-      }),
-    });
-    select.innerHTML = '<option value="">Ordner waehlen ...</option>';
+    const res = await fetchFolders(formToObject(actionForm));
+    if (!res) return;
+    select.innerHTML = "";
     for (const folder of res.folders) {
       if (folder.flags.includes("\\Noselect")) continue;
       const opt = document.createElement("option");
@@ -386,6 +389,7 @@ el("btn-load-folders").addEventListener("click", async () => {
       select.appendChild(opt);
     }
     select.style.display = "";
+    el("btn-add-dest-folder").style.display = "";
     toast(`${res.folders.length} Ordner gefunden.`, "success");
   } catch (err) {
     toast(err.message, "error");
@@ -395,9 +399,11 @@ el("btn-load-folders").addEventListener("click", async () => {
   }
 });
 
-el("folder-select").addEventListener("change", (e) => {
-  if (e.target.value) {
-    actionForm.querySelector('[name="folder"]').value = e.target.value;
+el("btn-add-dest-folder").addEventListener("click", () => {
+  const folder = el("dest-folder-select").value;
+  if (folder && !currentDestFolders.includes(folder)) {
+    currentDestFolders.push(folder);
+    renderDestFolderChips();
   }
 });
 
@@ -409,113 +415,129 @@ function editAction(act) {
   actionForm.querySelector('[name="port"]').value = act.port;
   actionForm.querySelector('[name="user"]').value = act.user;
   actionForm.querySelector('[name="pass"]').value = act.pass;
-  actionForm.querySelector('[name="folder"]').value = act.folder;
+  currentDestFolders = [...(act.dest_folders || [])];
+  renderDestFolderChips();
   actionForm.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 async function deleteAction(act) {
-  if (!confirm(`Action "${act.name}" wirklich loeschen?`)) return;
+  if (!confirm(`Ziel-Server "${act.name}" wirklich loeschen?`)) return;
   try {
     await api(`/api/actions/${act.id}`, { method: "DELETE" });
-    toast("Action geloescht.", "success");
+    toast("Ziel-Server geloescht.", "success");
     await loadAll();
   } catch (err) {
     toast(err.message, "error");
   }
 }
 
-// ---------- Rules CRUD ----------
+// ---------- Regeln: gemeinsames Loeschen ----------
 
-function updateSourceFolderOptions() {
-  const accountSelect = ruleForm.querySelector('[name="source_account_id"]');
-  const folderSelect = ruleForm.querySelector('[name="source_folder"]');
-  const current = folderSelect.value;
-  const acc = state.accounts.find((a) => a.id === accountSelect.value);
-  folderSelect.innerHTML = '<option value="">Quell-Ordner waehlen ...</option>';
-  for (const folder of (acc ? acc.source_folders : []) || []) {
-    const opt = document.createElement("option");
-    opt.value = folder;
-    opt.textContent = folder;
-    folderSelect.appendChild(opt);
+async function deleteRule(rule) {
+  if (!confirm("Wirklich loeschen?")) return;
+  try {
+    await api(`/api/rules/${rule.id}`, { method: "DELETE" });
+    toast("Geloescht.", "success");
+    await loadAll();
+  } catch (err) {
+    toast(err.message, "error");
   }
-  folderSelect.value = current;
 }
 
-ruleForm.querySelector('[name="source_account_id"]').addEventListener("change", updateSourceFolderOptions);
+// ---------- Ausnahmeregeln ----------
 
-function updateRuleFormVisibility() {
-  const field = ruleForm.querySelector('[name="field"]').value;
-  const headerInput = ruleForm.querySelector('[name="header_name"]');
-  const matchSelect = ruleForm.querySelector('[name="match_type"]');
-  const valueInput = ruleForm.querySelector('[name="value"]');
-  const sourceAccountSelect = ruleForm.querySelector('[name="source_account_id"]');
-  const sourceFolderSelect = ruleForm.querySelector('[name="source_folder"]');
-
+function updateExceptionFormVisibility() {
+  const field = exceptionForm.querySelector('[name="field"]').value;
+  const headerInput = exceptionForm.querySelector('[name="header_name"]');
   headerInput.style.display = field === "header" ? "" : "none";
   headerInput.required = field === "header";
-
-  const isSource = field === "source";
-  sourceAccountSelect.style.display = isSource ? "" : "none";
-  sourceFolderSelect.style.display = isSource ? "" : "none";
-  sourceAccountSelect.required = isSource;
-  sourceFolderSelect.required = isSource;
-
-  const isCatchAll = field === "all";
-  const showMatchFields = !isCatchAll && !isSource;
-  matchSelect.style.display = showMatchFields ? "" : "none";
-  valueInput.style.display = showMatchFields ? "" : "none";
-  valueInput.required = showMatchFields;
 }
 
-ruleForm.querySelector('[name="field"]').addEventListener("change", updateRuleFormVisibility);
-updateRuleFormVisibility();
+exceptionForm.querySelector('[name="field"]').addEventListener("change", updateExceptionFormVisibility);
+updateExceptionFormVisibility();
 
-ruleForm.addEventListener("submit", async (e) => {
+exceptionForm.querySelector('[name="dest_action_id"]').addEventListener("change", (e) => {
+  updateDependentFolderSelect(
+    e.target, exceptionForm.querySelector('[name="dest_folder"]'),
+    actionsWithFolders, (a) => a.dest_folders,
+  );
+});
+
+exceptionForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const data = formToObject(ruleForm);
+  const data = formToObject(exceptionForm);
   const id = data.id;
   try {
     if (id) {
       await api(`/api/rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
-      toast("Regel aktualisiert.", "success");
+      toast("Ausnahmeregel aktualisiert.", "success");
     } else {
       await api("/api/rules", { method: "POST", body: JSON.stringify(data) });
-      toast("Regel angelegt.", "success");
+      toast("Ausnahmeregel angelegt.", "success");
     }
-    resetForm(ruleForm, "rule");
+    resetForm(exceptionForm, "exception");
     await loadAll();
   } catch (err) {
     toast(err.message, "error");
   }
 });
 
-function editRule(rule) {
-  ruleForm.querySelector('[name="id"]').value = rule.id;
-  ruleForm.querySelector('[name="field"]').value = rule.field;
-  ruleForm.querySelector('[name="header_name"]').value = rule.header_name || "";
-  ruleForm.querySelector('[name="match_type"]').value = rule.match_type || "contains";
-  ruleForm.querySelector('[name="value"]').value = rule.value || "";
-  ruleForm.querySelector('[name="source_account_id"]').value = rule.source_account_id || "";
-  updateSourceFolderOptions();
-  ruleForm.querySelector('[name="source_folder"]').value = rule.source_folder || "";
-  ruleForm.querySelector('[name="action_id"]').value = rule.action_id;
-  updateRuleFormVisibility();
-  ruleForm.scrollIntoView({ behavior: "smooth", block: "center" });
+function exceptionDestLabel(rule) {
+  const action = state.actions.find((a) => a.id === rule.dest_action_id);
+  return `${action ? escapeHtml(action.name) : "?"} / ${escapeHtml(rule.dest_folder || "?")}`;
 }
 
-async function deleteRule(rule) {
-  if (!confirm("Regel wirklich loeschen?")) return;
-  try {
-    await api(`/api/rules/${rule.id}`, { method: "DELETE" });
-    toast("Regel geloescht.", "success");
-    await loadAll();
-  } catch (err) {
-    toast(err.message, "error");
-  }
+function exceptionLabel(rule) {
+  const fieldLabel = { from: "From", subject: "Subject", header: rule.header_name }[rule.field];
+  const matchLabel = { contains: "enthaelt", exact: "exakt", regex: "regex" }[rule.match_type];
+  return `<code>${escapeHtml(fieldLabel)}</code> ${matchLabel} <code>${escapeHtml(rule.value)}</code> &rarr; <code>${exceptionDestLabel(rule)}</code>`;
 }
 
-async function persistRuleOrder() {
-  const order = state.rules.map((r) => r.id);
+function getExceptions() {
+  return state.rules.filter((r) => isExceptionField(r.field));
+}
+
+function setExceptionOrder(newExceptions) {
+  const others = state.rules.filter((r) => !isExceptionField(r.field));
+  state.rules = [...newExceptions, ...others];
+}
+
+function renderExceptions() {
+  const list = el("exceptions-list");
+  list.innerHTML = "";
+  const exceptions = getExceptions();
+  exceptions.forEach((rule, idx) => {
+    const li = document.createElement("li");
+    li.className = "rule-item";
+    li.draggable = true;
+    li.dataset.id = rule.id;
+
+    const handle = document.createElement("span");
+    handle.className = "drag-handle";
+    handle.textContent = "☰";
+
+    const body = document.createElement("span");
+    body.className = "rule-body";
+    body.innerHTML = exceptionLabel(rule);
+
+    const actionsSpan = document.createElement("span");
+    actionsSpan.className = "rule-actions";
+    actionsSpan.appendChild(makeIconButton("↑", () => moveException(idx, -1), idx === 0));
+    actionsSpan.appendChild(makeIconButton("↓", () => moveException(idx, 1), idx === exceptions.length - 1));
+    actionsSpan.appendChild(makeButton("Bearbeiten", () => editException(rule)));
+    actionsSpan.appendChild(makeButton("Loeschen", () => deleteRule(rule), true));
+
+    li.appendChild(handle);
+    li.appendChild(body);
+    li.appendChild(actionsSpan);
+    list.appendChild(li);
+  });
+  attachExceptionDragHandlers();
+}
+
+async function persistExceptionOrder(newExceptionIds) {
+  const others = state.rules.filter((r) => !isExceptionField(r.field)).map((r) => r.id);
+  const order = [...newExceptionIds, ...others];
   try {
     await api("/api/rules/reorder", { method: "POST", body: JSON.stringify({ order }) });
     await refreshPreview();
@@ -525,57 +547,197 @@ async function persistRuleOrder() {
   }
 }
 
-function moveRule(idx, delta) {
+function moveException(idx, delta) {
+  const exceptions = getExceptions();
   const target = idx + delta;
-  if (target < 0 || target >= state.rules.length) return;
-  const [item] = state.rules.splice(idx, 1);
-  state.rules.splice(target, 0, item);
-  renderRules();
-  persistRuleOrder();
+  if (target < 0 || target >= exceptions.length) return;
+  const [item] = exceptions.splice(idx, 1);
+  exceptions.splice(target, 0, item);
+  setExceptionOrder(exceptions);
+  renderExceptions();
+  persistExceptionOrder(exceptions.map((r) => r.id));
 }
 
-// ---------- Drag & drop reordering ----------
+let dragExceptionId = null;
 
-let dragSourceId = null;
-
-function attachDragHandlers() {
-  const items = document.querySelectorAll(".rule-item");
-  items.forEach((item) => {
+function attachExceptionDragHandlers() {
+  document.querySelectorAll("#exceptions-list .rule-item").forEach((item) => {
     item.addEventListener("dragstart", () => {
-      dragSourceId = item.dataset.id;
+      dragExceptionId = item.dataset.id;
       item.classList.add("dragging");
     });
     item.addEventListener("dragend", () => {
       item.classList.remove("dragging");
-      dragSourceId = null;
+      dragExceptionId = null;
     });
-    item.addEventListener("dragover", (e) => {
-      e.preventDefault();
-    });
+    item.addEventListener("dragover", (e) => e.preventDefault());
     item.addEventListener("drop", (e) => {
       e.preventDefault();
       const targetId = item.dataset.id;
-      if (!dragSourceId || dragSourceId === targetId) return;
-      const fromIdx = state.rules.findIndex((r) => r.id === dragSourceId);
-      const toIdx = state.rules.findIndex((r) => r.id === targetId);
-      const [moved] = state.rules.splice(fromIdx, 1);
-      state.rules.splice(toIdx, 0, moved);
-      renderRules();
-      persistRuleOrder();
+      if (!dragExceptionId || dragExceptionId === targetId) return;
+      const exceptions = getExceptions();
+      const fromIdx = exceptions.findIndex((r) => r.id === dragExceptionId);
+      const toIdx = exceptions.findIndex((r) => r.id === targetId);
+      const [moved] = exceptions.splice(fromIdx, 1);
+      exceptions.splice(toIdx, 0, moved);
+      setExceptionOrder(exceptions);
+      renderExceptions();
+      persistExceptionOrder(exceptions.map((r) => r.id));
     });
   });
 }
 
-// ---------- Cancel buttons ----------
+function editException(rule) {
+  exceptionForm.querySelector('[name="id"]').value = rule.id;
+  exceptionForm.querySelector('[name="field"]').value = rule.field;
+  exceptionForm.querySelector('[name="header_name"]').value = rule.header_name || "";
+  exceptionForm.querySelector('[name="match_type"]').value = rule.match_type || "contains";
+  exceptionForm.querySelector('[name="value"]').value = rule.value || "";
+  const destSelect = exceptionForm.querySelector('[name="dest_action_id"]');
+  destSelect.value = rule.dest_action_id;
+  updateDependentFolderSelect(destSelect, exceptionForm.querySelector('[name="dest_folder"]'), actionsWithFolders, (a) => a.dest_folders);
+  exceptionForm.querySelector('[name="dest_folder"]').value = rule.dest_folder || "";
+  updateExceptionFormVisibility();
+  exceptionForm.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// ---------- Ordner-Zuordnungen ----------
+
+mappingForm.querySelector('[name="source_account_id"]').addEventListener("change", (e) => {
+  updateDependentFolderSelect(
+    e.target, mappingForm.querySelector('[name="source_folder"]'),
+    accountsWithFolders, (a) => a.source_folders,
+  );
+});
+
+mappingForm.querySelector('[name="dest_action_id"]').addEventListener("change", (e) => {
+  updateDependentFolderSelect(
+    e.target, mappingForm.querySelector('[name="dest_folder"]'),
+    actionsWithFolders, (a) => a.dest_folders,
+  );
+});
+
+mappingForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const data = formToObject(mappingForm);
+  data.field = "source";
+  const id = data.id;
+  try {
+    if (id) {
+      await api(`/api/rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
+      toast("Zuordnung aktualisiert.", "success");
+    } else {
+      await api("/api/rules", { method: "POST", body: JSON.stringify(data) });
+      toast("Zuordnung angelegt.", "success");
+    }
+    resetForm(mappingForm, "mapping");
+    await loadAll();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+function renderMappings() {
+  const tbody = document.querySelector("#mappings-table tbody");
+  tbody.innerHTML = "";
+  const mappings = state.rules.filter((r) => r.field === "source");
+  for (const rule of mappings) {
+    const sourceAccount = state.accounts.find((a) => a.id === rule.source_account_id);
+    const destAction = state.actions.find((a) => a.id === rule.dest_action_id);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${sourceAccount ? escapeHtml(sourceAccount.name) : "?"} / ${escapeHtml(rule.source_folder || "?")}</td>
+      <td class="arrow">&rarr;</td>
+      <td>${destAction ? escapeHtml(destAction.name) : "?"} / ${escapeHtml(rule.dest_folder || "?")}</td>
+      <td></td>`;
+    const actionsTd = tr.querySelector("td:last-child");
+    actionsTd.appendChild(makeButton("Bearbeiten", () => editMapping(rule)));
+    actionsTd.appendChild(makeButton("Loeschen", () => deleteRule(rule), true));
+    tbody.appendChild(tr);
+  }
+}
+
+function editMapping(rule) {
+  mappingForm.querySelector('[name="id"]').value = rule.id;
+  const sourceSelect = mappingForm.querySelector('[name="source_account_id"]');
+  sourceSelect.value = rule.source_account_id;
+  updateDependentFolderSelect(sourceSelect, mappingForm.querySelector('[name="source_folder"]'), accountsWithFolders, (a) => a.source_folders);
+  mappingForm.querySelector('[name="source_folder"]').value = rule.source_folder || "";
+
+  const destSelect = mappingForm.querySelector('[name="dest_action_id"]');
+  destSelect.value = rule.dest_action_id;
+  updateDependentFolderSelect(destSelect, mappingForm.querySelector('[name="dest_folder"]'), actionsWithFolders, (a) => a.dest_folders);
+  mappingForm.querySelector('[name="dest_folder"]').value = rule.dest_folder || "";
+
+  mappingForm.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// ---------- Catch-All ----------
+
+catchallForm.querySelector('[name="dest_action_id"]').addEventListener("change", (e) => {
+  updateDependentFolderSelect(
+    e.target, catchallForm.querySelector('[name="dest_folder"]'),
+    actionsWithFolders, (a) => a.dest_folders,
+  );
+});
+
+catchallForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const data = formToObject(catchallForm);
+  data.field = "all";
+  const id = data.id;
+  try {
+    if (id) {
+      await api(`/api/rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
+    } else {
+      await api("/api/rules", { method: "POST", body: JSON.stringify(data) });
+    }
+    toast("Catch-All gespeichert.", "success");
+    await loadAll();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+function editCatchall(rule) {
+  catchallForm.querySelector('[name="id"]').value = rule.id;
+  const destSelect = catchallForm.querySelector('[name="dest_action_id"]');
+  destSelect.value = rule.dest_action_id;
+  updateDependentFolderSelect(destSelect, catchallForm.querySelector('[name="dest_folder"]'), actionsWithFolders, (a) => a.dest_folders);
+  catchallForm.querySelector('[name="dest_folder"]').value = rule.dest_folder || "";
+  catchallForm.style.display = "";
+  catchallForm.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function renderCatchall() {
+  const display = el("catchall-display");
+  const catchall = state.rules.find((r) => r.field === "all");
+  display.innerHTML = "";
+  if (catchall) {
+    const action = state.actions.find((a) => a.id === catchall.dest_action_id);
+    const p = document.createElement("p");
+    p.innerHTML = `Alle uebrigen Mails &rarr; <code>${action ? escapeHtml(action.name) : "?"} / ${escapeHtml(catchall.dest_folder || "?")}</code>`;
+    display.appendChild(p);
+    display.appendChild(makeButton("Bearbeiten", () => editCatchall(catchall)));
+    display.appendChild(makeButton("Entfernen", () => deleteRule(catchall), true));
+    catchallForm.style.display = "none";
+  } else {
+    catchallForm.reset();
+    catchallForm.style.display = "";
+  }
+}
+
+// ---------- Cancel-Buttons ----------
 
 document.querySelectorAll("[data-cancel]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const name = btn.dataset.cancel;
-    resetForm({ account: accountForm, action: actionForm, rule: ruleForm }[name], name);
+    const forms = { account: accountForm, action: actionForm, exception: exceptionForm, mapping: mappingForm };
+    resetForm(forms[name], name);
   });
 });
 
-// ---------- Preview / Export ----------
+// ---------- Vorschau / Export ----------
 
 async function refreshPreview() {
   try {
@@ -615,5 +777,21 @@ async function saveToDisk(target) {
 el("btn-save-export").addEventListener("click", () => saveToDisk("export"));
 el("btn-save-home").addEventListener("click", () => saveToDisk("~/.fdm.conf"));
 el("btn-save-etc").addEventListener("click", () => saveToDisk("/etc/fdm.conf"));
+
+el("btn-run-now").addEventListener("click", async () => {
+  const btn = el("btn-run-now");
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = "Wird ausgefuehrt ...";
+  try {
+    const res = await api("/api/run-now", { method: "POST" });
+    toast(`Gespeichert unter ${res.saved_to}, fdm-runner wird ausloesen.`, "success");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
 
 loadAll();

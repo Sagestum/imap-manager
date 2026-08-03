@@ -32,6 +32,34 @@ def handle_http_exception(exc):
 _LOCK_FREE_DEFAULT = {"accounts": [], "actions": [], "rules": []}
 
 
+def migrate_config(data):
+    """Hebt aeltere Datenstaende auf das aktuelle Schema (dest_folders/dest_action_id)."""
+    for account in data["accounts"]:
+        account.setdefault("source_folders", [])
+
+    for action in data["actions"]:
+        if "dest_folders" not in action:
+            legacy_folder = action.pop("folder", None)
+            action["dest_folders"] = [legacy_folder] if legacy_folder else []
+        else:
+            action.pop("folder", None)
+
+    actions_by_id = {a["id"]: a for a in data["actions"]}
+    for rule in data["rules"]:
+        if "dest_action_id" not in rule:
+            legacy_action_id = rule.pop("action_id", None)
+            rule["dest_action_id"] = legacy_action_id
+            dest_action = actions_by_id.get(legacy_action_id)
+            if dest_action and dest_action.get("dest_folders"):
+                rule["dest_folder"] = dest_action["dest_folders"][0]
+            else:
+                rule.setdefault("dest_folder", "")
+        else:
+            rule.pop("action_id", None)
+
+    return data
+
+
 def load_config():
     if not DATA_FILE.exists():
         return dict(_LOCK_FREE_DEFAULT)
@@ -40,9 +68,7 @@ def load_config():
     data.setdefault("accounts", [])
     data.setdefault("actions", [])
     data.setdefault("rules", [])
-    for account in data["accounts"]:
-        account.setdefault("source_folders", [])
-    return data
+    return migrate_config(data)
 
 
 def save_config(config):
@@ -97,6 +123,21 @@ def parse_source_folders(payload, account_type):
         cleaned.append(folder)
     if cleaned and account_type not in ("imap", "imaps"):
         abort(400, description="Nur IMAP/IMAPS-Konten unterstuetzen mehrere Quell-Ordner.")
+    return cleaned
+
+
+def parse_dest_folders(payload):
+    folders = payload.get("dest_folders", [])
+    if not isinstance(folders, list):
+        abort(400, description="dest_folders muss eine Liste sein.")
+    cleaned = []
+    seen = set()
+    for raw in folders:
+        folder = str(raw).strip()
+        if not folder or folder in seen:
+            continue
+        seen.add(folder)
+        cleaned.append(folder)
     return cleaned
 
 
@@ -183,19 +224,20 @@ def delete_account(account_id):
     return "", 204
 
 
-# ---------- Actions ----------
+# ---------- Ziel-Server (Actions) ----------
 
 @app.route("/api/actions", methods=["POST"])
 def create_action():
     payload = request.get_json(force=True) or {}
-    require_fields(payload, ["name", "type", "server", "user", "pass", "folder"])
+    require_fields(payload, ["name", "type", "server", "user", "pass"])
     if payload["type"] not in ACTION_TYPES:
-        abort(400, description="Ungueltiger Action-Typ.")
+        abort(400, description="Ungueltiger Ziel-Server-Typ.")
     port = parse_port(payload)
 
     config = load_config()
     if any(a["name"] == payload["name"] for a in config["actions"]):
-        abort(400, description="Eine Action mit diesem Namen existiert bereits.")
+        abort(400, description="Ein Ziel-Server mit diesem Namen existiert bereits.")
+    dest_folders = parse_dest_folders(payload)
 
     action = {
         "id": new_id(),
@@ -205,7 +247,7 @@ def create_action():
         "port": port,
         "user": payload["user"].strip(),
         "pass": payload["pass"],
-        "folder": payload["folder"].strip(),
+        "dest_folders": dest_folders,
     }
     config["actions"].append(action)
     save_config(config)
@@ -215,17 +257,18 @@ def create_action():
 @app.route("/api/actions/<action_id>", methods=["PUT"])
 def update_action(action_id):
     payload = request.get_json(force=True) or {}
-    require_fields(payload, ["name", "type", "server", "user", "pass", "folder"])
+    require_fields(payload, ["name", "type", "server", "user", "pass"])
     if payload["type"] not in ACTION_TYPES:
-        abort(400, description="Ungueltiger Action-Typ.")
+        abort(400, description="Ungueltiger Ziel-Server-Typ.")
     port = parse_port(payload)
 
     config = load_config()
     action = next((a for a in config["actions"] if a["id"] == action_id), None)
     if not action:
-        abort(404, description="Action nicht gefunden.")
+        abort(404, description="Ziel-Server nicht gefunden.")
     if any(a["name"] == payload["name"] and a["id"] != action_id for a in config["actions"]):
-        abort(400, description="Eine Action mit diesem Namen existiert bereits.")
+        abort(400, description="Ein Ziel-Server mit diesem Namen existiert bereits.")
+    dest_folders = parse_dest_folders(payload)
 
     action.update({
         "name": payload["name"].strip(),
@@ -234,7 +277,7 @@ def update_action(action_id):
         "port": port,
         "user": payload["user"].strip(),
         "pass": payload["pass"],
-        "folder": payload["folder"].strip(),
+        "dest_folders": dest_folders,
     })
     save_config(config)
     return jsonify(action)
@@ -243,13 +286,13 @@ def update_action(action_id):
 @app.route("/api/actions/<action_id>", methods=["DELETE"])
 def delete_action(action_id):
     config = load_config()
-    in_use = any(r.get("action_id") == action_id for r in config["rules"])
+    in_use = any(r.get("dest_action_id") == action_id for r in config["rules"])
     if in_use:
-        abort(400, description="Action wird noch von mindestens einer Regel verwendet.")
+        abort(400, description="Ziel-Server wird noch von mindestens einer Regel verwendet.")
     before = len(config["actions"])
     config["actions"] = [a for a in config["actions"] if a["id"] != action_id]
     if len(config["actions"]) == before:
-        abort(404, description="Action nicht gefunden.")
+        abort(404, description="Ziel-Server nicht gefunden.")
     save_config(config)
     return "", 204
 
@@ -332,6 +375,9 @@ def imap_folders():
     return jsonify({"folders": folders})
 
 
+app.add_url_rule("/api/test-and-fetch-folders", view_func=imap_folders, methods=["POST"])
+
+
 # ---------- Rules ----------
 
 def resolve_source_selection(payload, config):
@@ -347,6 +393,31 @@ def resolve_source_selection(payload, config):
     return source_account_id, source_folder
 
 
+def resolve_dest_selection(payload, config):
+    dest_action_id = payload.get("dest_action_id")
+    dest_action = next(
+        (a for a in config["actions"] if a["id"] == dest_action_id), None
+    )
+    if not dest_action:
+        abort(400, description="Unbekannter Ziel-Server.")
+    dest_folder = str(payload.get("dest_folder", "")).strip()
+    if dest_folder not in (dest_action.get("dest_folders") or []):
+        abort(400, description="Der gewaehlte Ziel-Ordner ist bei diesem Ziel-Server nicht konfiguriert.")
+    return dest_action_id, dest_folder
+
+
+def check_duplicate_mapping(config, source_account_id, source_folder, exclude_rule_id=None):
+    duplicate = any(
+        r.get("field") == "source"
+        and r.get("id") != exclude_rule_id
+        and r.get("source_account_id") == source_account_id
+        and r.get("source_folder") == source_folder
+        for r in config["rules"]
+    )
+    if duplicate:
+        abort(400, description="Fuer dieses Quell-Konto und diesen Quell-Ordner existiert bereits eine Zuordnung.")
+
+
 @app.route("/api/rules", methods=["POST"])
 def create_rule():
     payload = request.get_json(force=True) or {}
@@ -355,17 +426,21 @@ def create_rule():
         abort(400, description="Ungueltiges Regel-Feld.")
 
     config = load_config()
-    action_id = payload.get("action_id")
-    if not any(a["id"] == action_id for a in config["actions"]):
-        abort(400, description="Unbekannte Ziel-Action.")
+    dest_action_id, dest_folder = resolve_dest_selection(payload, config)
 
-    rule = {"id": new_id(), "field": field, "action_id": action_id}
+    rule = {
+        "id": new_id(),
+        "field": field,
+        "dest_action_id": dest_action_id,
+        "dest_folder": dest_folder,
+    }
 
     if field == "all":
         if any(r["field"] == "all" for r in config["rules"]):
             abort(400, description="Es existiert bereits eine Catch-All-Regel.")
     elif field == "source":
         source_account_id, source_folder = resolve_source_selection(payload, config)
+        check_duplicate_mapping(config, source_account_id, source_folder)
         rule["source_account_id"] = source_account_id
         rule["source_folder"] = source_folder
     else:
@@ -400,17 +475,21 @@ def update_rule(rule_id):
     if not rule:
         abort(404, description="Regel nicht gefunden.")
 
-    action_id = payload.get("action_id")
-    if not any(a["id"] == action_id for a in config["actions"]):
-        abort(400, description="Unbekannte Ziel-Action.")
+    dest_action_id, dest_folder = resolve_dest_selection(payload, config)
 
-    new_rule = {"id": rule_id, "field": field, "action_id": action_id}
+    new_rule = {
+        "id": rule_id,
+        "field": field,
+        "dest_action_id": dest_action_id,
+        "dest_folder": dest_folder,
+    }
 
     if field == "all":
         if any(r["field"] == "all" and r["id"] != rule_id for r in config["rules"]):
             abort(400, description="Es existiert bereits eine Catch-All-Regel.")
     elif field == "source":
         source_account_id, source_folder = resolve_source_selection(payload, config)
+        check_duplicate_mapping(config, source_account_id, source_folder, exclude_rule_id=rule_id)
         new_rule["source_account_id"] = source_account_id
         new_rule["source_folder"] = source_folder
     else:
@@ -517,6 +596,30 @@ def save_to_disk():
         abort(500, description=f"Fehler beim Schreiben von {dest}: {exc}")
 
     return jsonify({"saved_to": str(dest)})
+
+
+RUN_CONFIG_DIR = Path(os.environ.get("FDM_CONFIG_DIR", str(BASE_DIR / "config")))
+RUN_TRIGGER_FILE = RUN_CONFIG_DIR / ".run_now"
+
+
+@app.route("/api/run-now", methods=["POST"])
+def run_now():
+    """Schreibt fdm.conf ins geteilte Volume und legt eine Trigger-Datei an,
+    die der fdm-runner-Container abfragt (siehe docker-compose.yml)."""
+    config = load_config()
+    conf_text = generate_conf(config)
+    dest = RUN_CONFIG_DIR / "fdm.conf"
+
+    try:
+        RUN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(conf_text)
+        os.chmod(dest, stat.S_IRUSR | stat.S_IWUSR)  # 600, enthaelt Klartext-Passwoerter
+        RUN_TRIGGER_FILE.touch()
+    except OSError as exc:
+        abort(500, description=f"Fehler beim Speichern/Ausloesen: {exc}")
+
+    return jsonify({"saved_to": str(dest), "triggered": True})
 
 
 if __name__ == "__main__":

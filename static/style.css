@@ -44,7 +44,33 @@ main {
   padding: 1.25rem 1.5rem;
 }
 
-.card h2 { margin-top: 0; font-size: 1.1rem; }
+.card h2 { margin-top: 0; font-size: 1.1rem; display: flex; align-items: center; gap: 0.5rem; }
+
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.hint-inline {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.arrow { color: var(--text-dim); font-size: 1.1rem; }
+
+button.run-now { background: var(--ok); }
+button.run-now:hover { filter: brightness(1.1); }
 
 .hint { color: var(--text-dim); font-size: 0.85rem; margin-top: -0.5rem; }
 

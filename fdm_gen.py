@@ -18,6 +18,11 @@ def account_variant_name(account, folder):
     return f'{account["name"]}::{folder}'
 
 
+def action_variant_name(action, folder):
+    """Eindeutiger fdm-Actionname fuer ein einzelnes Ziel-Server+Ordner-Paar."""
+    return f'{action["name"]}::{folder}'
+
+
 def pattern_for_rule(rule):
     """Baut aus Matching-Art + Eingabe den regulären Ausdruck fuer die Regel."""
     match_type = rule.get("match_type")
@@ -42,19 +47,30 @@ def header_name_for_rule(rule):
     return None
 
 
+def _dest_name_for_rule(rule, actions_by_id):
+    dest_action = actions_by_id.get(rule.get("dest_action_id"))
+    dest_folder = rule.get("dest_folder")
+    if not dest_action or not dest_folder:
+        return None
+    if dest_folder not in (dest_action.get("dest_folders") or []):
+        return None
+    return action_variant_name(dest_action, dest_folder)
+
+
 def generate_conf(config):
     accounts = config.get("accounts", [])
     actions = config.get("actions", [])
     rules = config.get("rules", [])
 
-    action_names = {a["id"]: a["name"] for a in actions}
     accounts_by_id = {a["id"]: a for a in accounts}
+    actions_by_id = {a["id"]: a for a in actions}
 
     lines = []
 
+    # --- Quell-Konten: ein fdm-Account pro (Konto, Ordner) ---
     lines.append("# --- ACCOUNTS ---")
     if not accounts:
-        lines.append("# (keine Accounts konfiguriert)")
+        lines.append("# (keine Quell-Konten konfiguriert)")
     for acc in accounts:
         folders = acc.get("source_folders") or []
         if not folders:
@@ -73,55 +89,66 @@ def generate_conf(config):
             )
     lines.append("")
 
+    # --- Ziel-Server: eine fdm-Action pro (Ziel-Server, Ordner) ---
     lines.append("# --- ACTIONS ---")
+    has_actions = False
     if not actions:
-        lines.append("# (keine Actions konfiguriert)")
+        lines.append("# (keine Ziel-Server konfiguriert)")
     for act in actions:
-        lines.append(
-            f'action {_q(act["name"])} {act["type"]} '
-            f'server {_q(act["server"])} port {act["port"]} '
-            f'user {_q(act["user"])} pass {_q(act["pass"])} '
-            f'folder {_q(act["folder"])}'
-        )
+        for folder in act.get("dest_folders") or []:
+            has_actions = True
+            lines.append(
+                f'action {_q(action_variant_name(act, folder))} {act["type"]} '
+                f'server {_q(act["server"])} port {act["port"]} '
+                f'user {_q(act["user"])} pass {_q(act["pass"])} '
+                f'folder {_q(folder)}'
+            )
+    if actions and not has_actions:
+        lines.append("# (kein Ziel-Server hat einen Ordner konfiguriert)")
     lines.append("")
 
+    # --- Regeln: IMMER Ausnahmeregeln -> Ordner-Zuordnungen -> Catch-All,
+    #     unabhaengig von der Reihenfolge im gespeicherten Datenmodell ---
     lines.append("# --- RULES ---")
-    normal_rules = [r for r in rules if r.get("field") != "all"]
+    exception_rules = [r for r in rules if r.get("field") in ("from", "subject", "header")]
+    mapping_rules = [r for r in rules if r.get("field") == "source"]
     catchall_rules = [r for r in rules if r.get("field") == "all"]
 
-    if not normal_rules and not catchall_rules:
+    if not exception_rules and not mapping_rules and not catchall_rules:
         lines.append("# (keine Regeln konfiguriert)")
 
-    for rule in normal_rules:
-        action_name = action_names.get(rule.get("action_id"))
-        if not action_name:
+    if exception_rules:
+        lines.append("# Ausnahmeregeln (greifen zuerst)")
+    for rule in exception_rules:
+        dest_name = _dest_name_for_rule(rule, actions_by_id)
+        if not dest_name:
             continue
-
-        if rule.get("field") == "source":
-            source_account = accounts_by_id.get(rule.get("source_account_id"))
-            folder = rule.get("source_folder")
-            if not source_account or not folder:
-                continue
-            variant_name = account_variant_name(source_account, folder)
-            pattern = f"^{re.escape(variant_name)}$"
-            lines.append(
-                f'match account {_q(pattern)} action {_q(action_name)}'
-            )
-            continue
-
         header = header_name_for_rule(rule)
         pattern = pattern_for_rule(rule)
         lines.append(
-            f'match header {_q(header)} regex {_q(pattern)} action {_q(action_name)}'
+            f'match header {_q(header)} regex {_q(pattern)} action {_q(dest_name)}'
         )
 
+    if mapping_rules:
+        lines.append("")
+        lines.append("# Ordner-Zuordnungen")
+    for rule in mapping_rules:
+        dest_name = _dest_name_for_rule(rule, actions_by_id)
+        source_account = accounts_by_id.get(rule.get("source_account_id"))
+        folder = rule.get("source_folder")
+        if not dest_name or not source_account or not folder:
+            continue
+        variant_name = account_variant_name(source_account, folder)
+        pattern = f"^{re.escape(variant_name)}$"
+        lines.append(f'match account {_q(pattern)} action {_q(dest_name)}')
+
     for rule in catchall_rules:
-        action_name = action_names.get(rule.get("action_id"))
-        if not action_name:
+        dest_name = _dest_name_for_rule(rule, actions_by_id)
+        if not dest_name:
             continue
         lines.append("")
         lines.append("# Fallback Rule")
-        lines.append(f'match all action {_q(action_name)}')
+        lines.append(f'match all action {_q(dest_name)}')
 
     lines.append("")
     return "\n".join(lines)
@@ -130,39 +157,53 @@ def generate_conf(config):
 def validate_config(config):
     """Einfache Konsistenzpruefung; gibt Liste von Warnungen zurueck."""
     warnings = []
-    account_names = [a["name"] for a in config.get("accounts", [])]
-    action_ids = {a["id"] for a in config.get("actions", [])}
-    accounts_by_id = {a["id"]: a for a in config.get("accounts", [])}
+    accounts = config.get("accounts", [])
+    actions = config.get("actions", [])
+    rules = config.get("rules", [])
 
+    account_names = [a["name"] for a in accounts]
     if len(account_names) != len(set(account_names)):
-        warnings.append("Es gibt Accounts mit doppeltem Namen.")
+        warnings.append("Es gibt Quell-Konten mit doppeltem Namen.")
 
-    action_names = [a["name"] for a in config.get("actions", [])]
+    action_names = [a["name"] for a in actions]
     if len(action_names) != len(set(action_names)):
-        warnings.append("Es gibt Actions mit doppeltem Namen.")
+        warnings.append("Es gibt Ziel-Server mit doppeltem Namen.")
 
-    for rule in config.get("rules", []):
-        if rule.get("action_id") not in action_ids:
+    accounts_by_id = {a["id"]: a for a in accounts}
+    actions_by_id = {a["id"]: a for a in actions}
+
+    for action in actions:
+        if not action.get("dest_folders"):
+            warnings.append(f'Ziel-Server "{action["name"]}" hat keinen Ziel-Ordner konfiguriert.')
+
+    for rule in rules:
+        dest_action = actions_by_id.get(rule.get("dest_action_id"))
+        if not dest_action:
+            warnings.append("Eine Regel verweist auf einen nicht existierenden Ziel-Server.")
+        elif rule.get("dest_folder") not in (dest_action.get("dest_folders") or []):
             warnings.append(
-                "Regel verweist auf eine nicht existierende Action."
+                f'Eine Regel verweist auf den Ziel-Ordner "{rule.get("dest_folder")}", der bei '
+                f'"{dest_action["name"]}" nicht mehr konfiguriert ist.'
             )
+
         if rule.get("field") == "header" and not rule.get("header_name", "").strip():
-            warnings.append("Eine Header-Regel hat keinen Headernamen gesetzt.")
+            warnings.append("Eine Ausnahmeregel hat keinen Headernamen gesetzt.")
+
         if rule.get("field") == "source":
             source_account = accounts_by_id.get(rule.get("source_account_id"))
             folder = rule.get("source_folder")
             if not source_account:
-                warnings.append("Eine Quell-Ordner-Regel verweist auf ein nicht existierendes Konto.")
+                warnings.append("Eine Ordner-Zuordnung verweist auf ein nicht existierendes Quell-Konto.")
             elif folder not in (source_account.get("source_folders") or []):
                 warnings.append(
-                    f'Eine Regel verweist auf den Ordner "{folder}", der bei '
+                    f'Eine Ordner-Zuordnung verweist auf den Quell-Ordner "{folder}", der bei '
                     f'"{source_account["name"]}" nicht mehr konfiguriert ist.'
                 )
 
-    catchalls = [r for r in config.get("rules", []) if r.get("field") == "all"]
+    catchalls = [r for r in rules if r.get("field") == "all"]
     if len(catchalls) > 1:
         warnings.append("Es gibt mehr als eine Catch-All-Regel.")
-    if not catchalls and config.get("rules"):
+    if not catchalls and rules:
         warnings.append("Keine Catch-All-Regel vorhanden (optional, aber empfohlen).")
 
     return warnings

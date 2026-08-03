@@ -9,13 +9,13 @@
 <body>
 <header>
   <h1>fdm.conf Manager</h1>
-  <p class="subtitle">Visuelle Verwaltung von Accounts, Actions und Filterregeln fuer fdm</p>
+  <p class="subtitle">Visuelle Verwaltung von Quell-Konten, Ziel-Servern und Verarbeitungsregeln fuer fdm</p>
 </header>
 
 <main>
-  <!-- ACCOUNTS -->
+  <!-- QUELL-KONTEN -->
   <section class="card">
-    <h2>Quell-Konten (Accounts)</h2>
+    <h2>Quell-Konten</h2>
     <table id="accounts-table">
       <thead>
         <tr><th>Name</th><th>Typ</th><th>Server</th><th>Port</th><th>Benutzer</th><th>Quell-Ordner</th><th></th></tr>
@@ -24,7 +24,7 @@
     </table>
     <form id="account-form" class="entity-form">
       <input type="hidden" name="id">
-      <input type="text" name="name" placeholder="Account-Name (z.B. privat_gmx)" required>
+      <input type="text" name="name" placeholder="Konto-Name (z.B. privat_gmx)" required>
       <select name="type" required>
         <option value="pop3">pop3</option>
         <option value="pop3s">pop3s</option>
@@ -42,77 +42,125 @@
       </div>
       <div id="source-folders-chips" class="chips"></div>
       <div class="form-actions">
-        <button type="submit">Account speichern</button>
+        <button type="submit">Konto speichern</button>
         <button type="button" class="secondary" data-cancel="account">Abbrechen</button>
       </div>
     </form>
   </section>
 
-  <!-- ACTIONS -->
+  <!-- ZIEL-SERVER -->
   <section class="card">
-    <h2>Ziel-Aktionen (Destinations / IMAP-Append)</h2>
+    <h2>Ziel-Server</h2>
     <table id="actions-table">
       <thead>
-        <tr><th>Name</th><th>Typ</th><th>Server</th><th>Port</th><th>Benutzer</th><th>Ordner</th><th></th></tr>
+        <tr><th>Name</th><th>Typ</th><th>Server</th><th>Port</th><th>Benutzer</th><th>Ziel-Ordner</th><th></th></tr>
       </thead>
       <tbody></tbody>
     </table>
     <form id="action-form" class="entity-form">
       <input type="hidden" name="id">
-      <input type="text" name="name" placeholder="Action-Name (z.B. to_newsletter)" required>
+      <input type="text" name="name" placeholder="Ziel-Server-Name (z.B. gmail)" required>
       <select name="type" required>
         <option value="imap">imap</option>
         <option value="imaps">imaps</option>
       </select>
-      <input type="text" name="server" placeholder="Server (z.B. imap.ziel-provider.de)" required>
+      <input type="text" name="server" placeholder="Server (z.B. imap.gmail.com)" required>
       <input type="number" name="port" placeholder="Port" min="1" max="65535" required>
       <input type="text" name="user" placeholder="Benutzername" required>
       <input type="password" name="pass" placeholder="Passwort" required>
-      <div class="folder-field">
-        <input type="text" name="folder" placeholder="Ziel-Ordner (z.B. INBOX.Newsletter)" required>
-        <button type="button" id="btn-load-folders" class="secondary">Ordner laden</button>
-        <select id="folder-select" style="display:none;"></select>
+      <div class="folder-field" id="action-folder-field">
+        <button type="button" id="btn-load-dest-folders" class="secondary">Ordner laden</button>
+        <select id="dest-folder-select" style="display:none;"></select>
+        <button type="button" id="btn-add-dest-folder" class="secondary" style="display:none;">+ Hinzufuegen</button>
       </div>
+      <div id="dest-folders-chips" class="chips"></div>
       <div class="form-actions">
-        <button type="submit">Action speichern</button>
+        <button type="submit">Ziel-Server speichern</button>
         <button type="button" class="secondary" data-cancel="action">Abbrechen</button>
       </div>
     </form>
   </section>
 
-  <!-- RULES -->
+  <!-- AUSNAHMEREGELN -->
   <section class="card">
-    <h2>Filter-Regeln (Rules)</h2>
-    <p class="hint">Reihenfolge per Drag &amp; Drop oder Pfeiltasten aendern. Regeln werden von oben nach unten geprueft; die Catch-All-Regel greift zuletzt.</p>
-    <ul id="rules-list"></ul>
-    <form id="rule-form" class="entity-form">
+    <h2><span class="step-badge">1</span> Ausnahmeregeln <span class="hint-inline">greifen zuerst</span></h2>
+    <p class="hint">Werden vor den Ordner-Zuordnungen geprueft, unabhaengig davon aus welchem Quell-Ordner die Mail kommt. Reihenfolge per Drag &amp; Drop oder Pfeiltasten aendern.</p>
+    <ul id="exceptions-list"></ul>
+    <form id="exception-form" class="entity-form">
       <input type="hidden" name="id">
       <select name="field" required>
         <option value="from">Absender (From)</option>
         <option value="subject">Betreff (Subject)</option>
         <option value="header">Beliebiger Header</option>
-        <option value="source">Quell-Ordner (Konto)</option>
-        <option value="all">Catch-All (alle uebrigen Mails)</option>
       </select>
-      <input type="text" name="header_name" placeholder='Headername (z.B. List-Unsubscribe)'>
+      <input type="text" name="header_name" placeholder='Headername (z.B. List-Unsubscribe)' style="display:none;">
       <select name="match_type">
         <option value="contains">Enthaelt String</option>
         <option value="exact">Exakte Uebereinstimmung</option>
         <option value="regex">Regulaerer Ausdruck</option>
       </select>
       <input type="text" name="value" placeholder="Wert / Regex">
-      <select name="source_account_id">
-        <option value="">Quell-Konto waehlen ...</option>
+      <span class="arrow">&rarr;</span>
+      <select name="dest_action_id" required>
+        <option value="">Ziel-Server waehlen ...</option>
       </select>
-      <select name="source_folder">
-        <option value="">Quell-Ordner waehlen ...</option>
-      </select>
-      <select name="action_id" required>
-        <option value="">Ziel-Action waehlen ...</option>
+      <select name="dest_folder" required>
+        <option value="">Ziel-Ordner waehlen ...</option>
       </select>
       <div class="form-actions">
-        <button type="submit">Regel speichern</button>
-        <button type="button" class="secondary" data-cancel="rule">Abbrechen</button>
+        <button type="submit">Ausnahmeregel speichern</button>
+        <button type="button" class="secondary" data-cancel="exception">Abbrechen</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ORDNER-ZUORDNUNGEN -->
+  <section class="card">
+    <h2><span class="step-badge">2</span> Ordner-Zuordnungen <span class="hint-inline">Standard-Verarbeitung</span></h2>
+    <p class="hint">Legt fest, wohin Mails aus einem bestimmten Quell-Ordner standardmaessig verschoben werden. Greift NACH den Ausnahmeregeln.</p>
+    <table id="mappings-table">
+      <thead>
+        <tr><th>Quelle</th><th></th><th>Ziel</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <form id="mapping-form" class="entity-form">
+      <input type="hidden" name="id">
+      <select name="source_account_id" required>
+        <option value="">Quell-Konto waehlen ...</option>
+      </select>
+      <select name="source_folder" required>
+        <option value="">Quell-Ordner waehlen ...</option>
+      </select>
+      <span class="arrow">&rarr;</span>
+      <select name="dest_action_id" required>
+        <option value="">Ziel-Server waehlen ...</option>
+      </select>
+      <select name="dest_folder" required>
+        <option value="">Ziel-Ordner waehlen ...</option>
+      </select>
+      <div class="form-actions">
+        <button type="submit">Zuordnung speichern</button>
+        <button type="button" class="secondary" data-cancel="mapping">Abbrechen</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- CATCH-ALL -->
+  <section class="card">
+    <h2><span class="step-badge">3</span> Catch-All <span class="hint-inline">Fallback</span></h2>
+    <p class="hint">Greift nur, wenn weder eine Ausnahmeregel noch eine Ordner-Zuordnung passt. Optional, maximal eine Regel.</p>
+    <div id="catchall-display"></div>
+    <form id="catchall-form" class="entity-form">
+      <input type="hidden" name="id">
+      <select name="dest_action_id" required>
+        <option value="">Ziel-Server waehlen ...</option>
+      </select>
+      <select name="dest_folder" required>
+        <option value="">Ziel-Ordner waehlen ...</option>
+      </select>
+      <div class="form-actions">
+        <button type="submit">Catch-All speichern</button>
       </div>
     </form>
   </section>
@@ -128,6 +176,7 @@
       <button id="btn-save-export" type="button">In Export-Verzeichnis speichern</button>
       <button id="btn-save-home" type="button">Speichern unter ~/.fdm.conf</button>
       <button id="btn-save-etc" type="button" class="danger">Speichern unter /etc/fdm.conf</button>
+      <button id="btn-run-now" type="button" class="run-now">Speichern &amp; Jetzt ausfuehren</button>
     </div>
   </section>
 </main>

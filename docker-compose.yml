@@ -9,9 +9,11 @@ services:
     volumes:
       - imap_manager_data:/app/data
       - imap_manager_export:/app/export
+      - imap_manager_config:/app/config
     environment:
       - FDM_WEBUI_HOST=0.0.0.0
       - FDM_WEBUI_PORT=5000
+      - FDM_CONFIG_DIR=/app/config
       # nginx-proxy liest diese Variablen per Docker-Socket aus und baut daraus die vhost-Config
       - VIRTUAL_HOST=${VIRTUAL_HOST:-imap-manager.example.com}
       - VIRTUAL_PORT=5000
@@ -21,6 +23,20 @@ services:
     networks:
       - proxy
 
+  fdm-runner:
+    build: ./runner
+    image: imap-manager-runner:latest
+    container_name: fdm-runner
+    restart: unless-stopped
+    volumes:
+      - imap_manager_config:/app/config
+    environment:
+      - FDM_CONFIG_DIR=/app/config
+      # Cron-Syntax, z.B. "*/5 * * * *" fuer alle 5 Minuten
+      - "CRON_SCHEDULE=${FDM_CRON_SCHEDULE:-*/5 * * * *}"
+      # wie oft (Sekunden) auf die .run_now-Trigger-Datei geprueft wird
+      - "TRIGGER_POLL_INTERVAL=${FDM_TRIGGER_POLL_INTERVAL:-5}"
+
 networks:
   proxy:
     name: ${PROXY_NETWORK:-nginx-proxy}
@@ -29,3 +45,4 @@ networks:
 volumes:
   imap_manager_data:
   imap_manager_export:
+  imap_manager_config:
