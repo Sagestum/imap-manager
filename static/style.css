@@ -99,6 +99,36 @@ input[type="number"] { width: 90px; }
 .folder-field input[type="text"] { flex: 1 1 220px; }
 .folder-field select { flex: 1 1 220px; }
 
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex: 1 1 100%;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(79,140,255,0.12);
+  color: var(--accent-hover);
+  border: 1px solid rgba(79,140,255,0.3);
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem 0.2rem 0.7rem;
+  font-size: 0.82rem;
+}
+.chip button {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  line-height: 1;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.chip button:hover { background: rgba(255,255,255,0.15); }
+
 .form-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; width: 100%; }
 
 button {

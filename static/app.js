@@ -1,6 +1,7 @@
 "use strict";
 
 const state = { accounts: [], actions: [], rules: [] };
+let currentSourceFolders = [];
 
 const el = (id) => document.getElementById(id);
 const accountForm = el("account-form");
@@ -50,6 +51,14 @@ function resetForm(form, name) {
     select.style.display = "none";
     select.innerHTML = "";
   }
+  if (name === "account") {
+    currentSourceFolders = [];
+    renderSourceFolderChips();
+    el("source-folder-select").style.display = "none";
+    el("source-folder-select").innerHTML = "";
+    el("btn-add-source-folder").style.display = "none";
+    updateAccountFolderFieldVisibility();
+  }
 }
 
 // ---------- Load & render ----------
@@ -70,6 +79,7 @@ function renderAccounts() {
   const tbody = document.querySelector("#accounts-table tbody");
   tbody.innerHTML = "";
   for (const acc of state.accounts) {
+    const folders = acc.source_folders || [];
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${escapeHtml(acc.name)}</td>
@@ -77,12 +87,26 @@ function renderAccounts() {
       <td>${escapeHtml(acc.server)}</td>
       <td>${acc.port}</td>
       <td>${escapeHtml(acc.user)}</td>
+      <td>${folders.length ? escapeHtml(folders.join(", ")) : "<em>(Standard)</em>"}</td>
       <td></td>`;
     const actionsTd = tr.querySelector("td:last-child");
     actionsTd.appendChild(makeButton("Bearbeiten", () => editAccount(acc)));
     actionsTd.appendChild(makeButton("Loeschen", () => deleteAccount(acc), true));
     tbody.appendChild(tr);
   }
+
+  const sourceAccountSelect = ruleForm.querySelector('[name="source_account_id"]');
+  const currentSourceAccount = sourceAccountSelect.value;
+  sourceAccountSelect.innerHTML = '<option value="">Quell-Konto waehlen ...</option>';
+  for (const acc of state.accounts) {
+    if (!(acc.source_folders || []).length) continue;
+    const opt = document.createElement("option");
+    opt.value = acc.id;
+    opt.textContent = acc.name;
+    sourceAccountSelect.appendChild(opt);
+  }
+  sourceAccountSelect.value = currentSourceAccount;
+  updateSourceFolderOptions();
 }
 
 function renderActions() {
@@ -121,6 +145,11 @@ function ruleLabel(rule) {
   const actionName = action ? action.name : "?";
   if (rule.field === "all") {
     return `<strong>Catch-All</strong> &rarr; <code>${escapeHtml(actionName)}</code>`;
+  }
+  if (rule.field === "source") {
+    const sourceAccount = state.accounts.find((a) => a.id === rule.source_account_id);
+    const accountLabel = sourceAccount ? sourceAccount.name : "?";
+    return `Quelle <code>${escapeHtml(accountLabel)} · ${escapeHtml(rule.source_folder || "?")}</code> &rarr; <code>${escapeHtml(actionName)}</code>`;
   }
   const fieldLabel = { from: "From", subject: "Subject", header: rule.header_name }[rule.field];
   const matchLabel = { contains: "enthaelt", exact: "exakt", regex: "regex" }[rule.match_type];
@@ -190,6 +219,7 @@ function escapeHtml(str) {
 accountForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const data = formToObject(accountForm);
+  data.source_folders = currentSourceFolders;
   const id = data.id;
   try {
     if (id) {
@@ -199,10 +229,87 @@ accountForm.addEventListener("submit", async (e) => {
       await api("/api/accounts", { method: "POST", body: JSON.stringify(data) });
       toast("Account angelegt.", "success");
     }
-    resetForm(accountForm);
+    resetForm(accountForm, "account");
     await loadAll();
   } catch (err) {
     toast(err.message, "error");
+  }
+});
+
+function updateAccountFolderFieldVisibility() {
+  const type = accountForm.querySelector('[name="type"]').value;
+  const isImap = type === "imap" || type === "imaps";
+  el("account-folder-field").style.display = isImap ? "" : "none";
+  if (!isImap && currentSourceFolders.length) {
+    currentSourceFolders = [];
+    renderSourceFolderChips();
+  }
+}
+
+accountForm.querySelector('[name="type"]').addEventListener("change", updateAccountFolderFieldVisibility);
+
+function renderSourceFolderChips() {
+  const box = el("source-folders-chips");
+  box.innerHTML = "";
+  for (const folder of currentSourceFolders) {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.textContent = folder;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      currentSourceFolders = currentSourceFolders.filter((f) => f !== folder);
+      renderSourceFolderChips();
+    });
+    chip.appendChild(remove);
+    box.appendChild(chip);
+  }
+}
+
+el("btn-load-source-folders").addEventListener("click", async () => {
+  const data = formToObject(accountForm);
+  if (!data.server || !data.user || !data.pass || !data.port) {
+    toast("Bitte zuerst Server, Port, Benutzer und Passwort ausfuellen.", "error");
+    return;
+  }
+  const btn = el("btn-load-source-folders");
+  const select = el("source-folder-select");
+  btn.disabled = true;
+  btn.textContent = "Lade ...";
+  try {
+    const res = await api("/api/imap/folders", {
+      method: "POST",
+      body: JSON.stringify({
+        type: data.type, server: data.server, port: data.port,
+        user: data.user, pass: data.pass,
+      }),
+    });
+    select.innerHTML = "";
+    for (const folder of res.folders) {
+      if (folder.flags.includes("\\Noselect")) continue;
+      const opt = document.createElement("option");
+      opt.value = folder.name;
+      opt.textContent = folder.name;
+      select.appendChild(opt);
+    }
+    select.style.display = "";
+    el("btn-add-source-folder").style.display = "";
+    toast(`${res.folders.length} Ordner gefunden.`, "success");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Ordner laden";
+  }
+});
+
+el("btn-add-source-folder").addEventListener("click", () => {
+  const select = el("source-folder-select");
+  const folder = select.value;
+  if (folder && !currentSourceFolders.includes(folder)) {
+    currentSourceFolders.push(folder);
+    renderSourceFolderChips();
   }
 });
 
@@ -214,6 +321,9 @@ function editAccount(acc) {
   accountForm.querySelector('[name="port"]').value = acc.port;
   accountForm.querySelector('[name="user"]').value = acc.user;
   accountForm.querySelector('[name="pass"]').value = acc.pass;
+  currentSourceFolders = [...(acc.source_folders || [])];
+  renderSourceFolderChips();
+  updateAccountFolderFieldVisibility();
   accountForm.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
@@ -316,19 +426,45 @@ async function deleteAction(act) {
 
 // ---------- Rules CRUD ----------
 
+function updateSourceFolderOptions() {
+  const accountSelect = ruleForm.querySelector('[name="source_account_id"]');
+  const folderSelect = ruleForm.querySelector('[name="source_folder"]');
+  const current = folderSelect.value;
+  const acc = state.accounts.find((a) => a.id === accountSelect.value);
+  folderSelect.innerHTML = '<option value="">Quell-Ordner waehlen ...</option>';
+  for (const folder of (acc ? acc.source_folders : []) || []) {
+    const opt = document.createElement("option");
+    opt.value = folder;
+    opt.textContent = folder;
+    folderSelect.appendChild(opt);
+  }
+  folderSelect.value = current;
+}
+
+ruleForm.querySelector('[name="source_account_id"]').addEventListener("change", updateSourceFolderOptions);
+
 function updateRuleFormVisibility() {
   const field = ruleForm.querySelector('[name="field"]').value;
   const headerInput = ruleForm.querySelector('[name="header_name"]');
   const matchSelect = ruleForm.querySelector('[name="match_type"]');
   const valueInput = ruleForm.querySelector('[name="value"]');
+  const sourceAccountSelect = ruleForm.querySelector('[name="source_account_id"]');
+  const sourceFolderSelect = ruleForm.querySelector('[name="source_folder"]');
 
   headerInput.style.display = field === "header" ? "" : "none";
   headerInput.required = field === "header";
 
+  const isSource = field === "source";
+  sourceAccountSelect.style.display = isSource ? "" : "none";
+  sourceFolderSelect.style.display = isSource ? "" : "none";
+  sourceAccountSelect.required = isSource;
+  sourceFolderSelect.required = isSource;
+
   const isCatchAll = field === "all";
-  matchSelect.style.display = isCatchAll ? "none" : "";
-  valueInput.style.display = isCatchAll ? "none" : "";
-  valueInput.required = !isCatchAll;
+  const showMatchFields = !isCatchAll && !isSource;
+  matchSelect.style.display = showMatchFields ? "" : "none";
+  valueInput.style.display = showMatchFields ? "" : "none";
+  valueInput.required = showMatchFields;
 }
 
 ruleForm.querySelector('[name="field"]').addEventListener("change", updateRuleFormVisibility);
@@ -359,6 +495,9 @@ function editRule(rule) {
   ruleForm.querySelector('[name="header_name"]').value = rule.header_name || "";
   ruleForm.querySelector('[name="match_type"]').value = rule.match_type || "contains";
   ruleForm.querySelector('[name="value"]').value = rule.value || "";
+  ruleForm.querySelector('[name="source_account_id"]').value = rule.source_account_id || "";
+  updateSourceFolderOptions();
+  ruleForm.querySelector('[name="source_folder"]').value = rule.source_folder || "";
   ruleForm.querySelector('[name="action_id"]').value = rule.action_id;
   updateRuleFormVisibility();
   ruleForm.scrollIntoView({ behavior: "smooth", block: "center" });

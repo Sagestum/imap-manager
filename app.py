@@ -40,6 +40,8 @@ def load_config():
     data.setdefault("accounts", [])
     data.setdefault("actions", [])
     data.setdefault("rules", [])
+    for account in data["accounts"]:
+        account.setdefault("source_folders", [])
     return data
 
 
@@ -62,7 +64,7 @@ def new_id():
 ACCOUNT_TYPES = {"pop3", "pop3s", "imap", "imaps"}
 ACTION_TYPES = {"imap", "imaps"}
 MATCH_TYPES = {"contains", "exact", "regex"}
-FIELD_TYPES = {"from", "subject", "header", "all"}
+FIELD_TYPES = {"from", "subject", "header", "source", "all"}
 
 
 def require_fields(payload, fields):
@@ -79,6 +81,23 @@ def parse_port(payload):
     if not (1 <= port <= 65535):
         abort(400, description="Port muss zwischen 1 und 65535 liegen.")
     return port
+
+
+def parse_source_folders(payload, account_type):
+    folders = payload.get("source_folders", [])
+    if not isinstance(folders, list):
+        abort(400, description="source_folders muss eine Liste sein.")
+    cleaned = []
+    seen = set()
+    for raw in folders:
+        folder = str(raw).strip()
+        if not folder or folder in seen:
+            continue
+        seen.add(folder)
+        cleaned.append(folder)
+    if cleaned and account_type not in ("imap", "imaps"):
+        abort(400, description="Nur IMAP/IMAPS-Konten unterstuetzen mehrere Quell-Ordner.")
+    return cleaned
 
 
 @app.route("/")
@@ -104,6 +123,7 @@ def create_account():
     config = load_config()
     if any(a["name"] == payload["name"] for a in config["accounts"]):
         abort(400, description="Ein Account mit diesem Namen existiert bereits.")
+    source_folders = parse_source_folders(payload, payload["type"])
 
     account = {
         "id": new_id(),
@@ -113,6 +133,7 @@ def create_account():
         "port": port,
         "user": payload["user"].strip(),
         "pass": payload["pass"],
+        "source_folders": source_folders,
     }
     config["accounts"].append(account)
     save_config(config)
@@ -133,6 +154,7 @@ def update_account(account_id):
         abort(404, description="Account nicht gefunden.")
     if any(a["name"] == payload["name"] and a["id"] != account_id for a in config["accounts"]):
         abort(400, description="Ein Account mit diesem Namen existiert bereits.")
+    source_folders = parse_source_folders(payload, payload["type"])
 
     account.update({
         "name": payload["name"].strip(),
@@ -141,6 +163,7 @@ def update_account(account_id):
         "port": port,
         "user": payload["user"].strip(),
         "pass": payload["pass"],
+        "source_folders": source_folders,
     })
     save_config(config)
     return jsonify(account)
@@ -149,6 +172,9 @@ def update_account(account_id):
 @app.route("/api/accounts/<account_id>", methods=["DELETE"])
 def delete_account(account_id):
     config = load_config()
+    in_use = any(r.get("source_account_id") == account_id for r in config["rules"])
+    if in_use:
+        abort(400, description="Konto wird noch von mindestens einer Regel als Quelle verwendet.")
     before = len(config["accounts"])
     config["accounts"] = [a for a in config["accounts"] if a["id"] != account_id]
     if len(config["accounts"]) == before:
@@ -308,6 +334,19 @@ def imap_folders():
 
 # ---------- Rules ----------
 
+def resolve_source_selection(payload, config):
+    source_account_id = payload.get("source_account_id")
+    source_account = next(
+        (a for a in config["accounts"] if a["id"] == source_account_id), None
+    )
+    if not source_account:
+        abort(400, description="Unbekanntes Quell-Konto.")
+    source_folder = str(payload.get("source_folder", "")).strip()
+    if source_folder not in (source_account.get("source_folders") or []):
+        abort(400, description="Der gewaehlte Quell-Ordner ist bei diesem Konto nicht konfiguriert.")
+    return source_account_id, source_folder
+
+
 @app.route("/api/rules", methods=["POST"])
 def create_rule():
     payload = request.get_json(force=True) or {}
@@ -325,6 +364,10 @@ def create_rule():
     if field == "all":
         if any(r["field"] == "all" for r in config["rules"]):
             abort(400, description="Es existiert bereits eine Catch-All-Regel.")
+    elif field == "source":
+        source_account_id, source_folder = resolve_source_selection(payload, config)
+        rule["source_account_id"] = source_account_id
+        rule["source_folder"] = source_folder
     else:
         match_type = payload.get("match_type")
         if match_type not in MATCH_TYPES:
@@ -366,6 +409,10 @@ def update_rule(rule_id):
     if field == "all":
         if any(r["field"] == "all" and r["id"] != rule_id for r in config["rules"]):
             abort(400, description="Es existiert bereits eine Catch-All-Regel.")
+    elif field == "source":
+        source_account_id, source_folder = resolve_source_selection(payload, config)
+        new_rule["source_account_id"] = source_account_id
+        new_rule["source_folder"] = source_folder
     else:
         match_type = payload.get("match_type")
         if match_type not in MATCH_TYPES:
