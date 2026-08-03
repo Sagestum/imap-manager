@@ -1,8 +1,30 @@
 FROM debian:bookworm-slim
 
+# Debian/Ubuntu package the tool as "1.9+git20181219-1" - a Dec 2018 snapshot
+# that predates the May 2020 upstream fix for a CRLF/APPEND literal-size bug
+# (github.com/nicm/fdm commit 3473690, "IMAP delivery - fix a bug in CRLF
+# handling"), which caused real IMAP servers to reject deliveries with
+# "3 BAD Could not parse command". Building from a pinned, newer commit
+# avoids that. Bump FDM_GIT_REF if upstream ever moves again.
+ARG FDM_GIT_REF=0918b78a82a789d63cebe44b7662f0a8dc603000
+
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends fdm cron util-linux ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        git ca-certificates build-essential autoconf automake bison pkg-config \
+        libtdb-dev zlib1g-dev libssl-dev \
+        cron util-linux \
     && rm -rf /var/lib/apt/lists/*
+
+RUN git init /usr/src/fdm \
+    && cd /usr/src/fdm \
+    && git fetch --depth 1 https://github.com/nicm/fdm.git "$FDM_GIT_REF" \
+    && git checkout FETCH_HEAD \
+    && ./autogen.sh \
+    && ./configure \
+    && make \
+    && make install \
+    && cd / \
+    && rm -rf /usr/src/fdm
 
 COPY runner/entrypoint.sh /entrypoint.sh
 COPY VERSION /VERSION
