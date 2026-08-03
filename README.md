@@ -48,6 +48,11 @@ seine korrekt berechnete Nachrichtengröße zugunsten der Originalgröße *vor* 
 `Received:`-Kopfzeile, was die deklarierte IMAP-Literal-Länge bei jeder echten Zustellung an Gmail
 zu kurz machte und ebenfalls zu `BAD Could not parse command` führte.
 
+Ein zweiter Patch ([`runner/patches/fdm-preserve-date.patch`](runner/patches/fdm-preserve-date.patch))
+ergänzt beim `APPEND` das optionale IMAP-Datums-Argument (fehlte im Original komplett), damit
+übertragene Mails ihr echtes Datum (`INTERNALDATE`) behalten statt mit dem Zustellzeitpunkt zu
+erscheinen — genutzt wird dafür fdms eigene, bereits vorhandene `mailtime()`-Funktion.
+
 ## Starten
 
 Vorgesehen für den Betrieb hinter [nginx-proxy](https://github.com/nginx-proxy/nginx-proxy)

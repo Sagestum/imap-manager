@@ -24,19 +24,30 @@ RUN apt-get update \
 # can't parse: "3 BAD Could not parse command". Confirmed against a real
 # Gmail delivery. Patch removes that special case, falling back to the
 # general (correct) CRLF-aware size calculation for all servers.
+#
+# Second patch: fdm's IMAP APPEND command never sends the optional
+# date-time argument, so servers set INTERNALDATE to the delivery time
+# instead of the mail's real date - delivered messages then sort/display
+# with today's date in clients that go by INTERNALDATE rather than the
+# Date: header. fdm already has a mailtime() helper (used for match-age
+# and mail_* tags) that parses the Date: header into a time_t; this patch
+# just formats that into the IMAP date-time syntax and adds it to both
+# APPEND code paths (quoted-folder and literal-folder).
 COPY runner/patches/fdm-xyzzy-append-size.patch /tmp/fdm-xyzzy-append-size.patch
+COPY runner/patches/fdm-preserve-date.patch /tmp/fdm-preserve-date.patch
 
 RUN git init /usr/src/fdm \
     && cd /usr/src/fdm \
     && git fetch --depth 1 https://github.com/nicm/fdm.git "$FDM_GIT_REF" \
     && git checkout FETCH_HEAD \
     && patch -p1 < /tmp/fdm-xyzzy-append-size.patch \
+    && patch -p1 < /tmp/fdm-preserve-date.patch \
     && ./autogen.sh \
     && ./configure \
     && make \
     && make install \
     && cd / \
-    && rm -rf /usr/src/fdm /tmp/fdm-xyzzy-append-size.patch
+    && rm -rf /usr/src/fdm /tmp/fdm-xyzzy-append-size.patch /tmp/fdm-preserve-date.patch
 
 # fdm faellt fuer die eigentliche Fetch-Arbeit per Privilege-Separation auf
 # einen unprivilegierten Nutzer "_fdm" zurueck (compiled-in default in diesem
