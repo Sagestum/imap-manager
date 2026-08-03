@@ -9,18 +9,23 @@ def _q(value):
 
 
 def account_variant_name(account, folder):
-    """Eindeutiger fdm-Accountname fuer ein einzelnes Postfach+Ordner-Paar.
-
-    Ohne Leerzeichen/Sonderzeichen, damit re.escape() beim Erzeugen der
-    "match account"-Regel keine Escape-Sequenzen erzeugt, die von einer
-    strikten POSIX-ERE-Implementierung (regcomp) abgelehnt werden koennten.
-    """
+    """Eindeutiger fdm-Accountname fuer ein einzelnes Postfach+Ordner-Paar."""
     return f'{account["name"]}::{folder}'
 
 
 def action_variant_name(action, folder):
     """Eindeutiger fdm-Actionname fuer ein einzelnes Ziel-Server+Ordner-Paar."""
     return f'{action["name"]}::{folder}'
+
+
+_GLOB_SPECIAL = set("*?[]\\")
+
+
+def escape_glob(value):
+    """Escaped einen String fuer "match account", das laut fdm.conf(5) shell-
+    glob-Wildcards verwendet (kein Regex - anders als "match header ... regex").
+    """
+    return "".join(f"\\{c}" if c in _GLOB_SPECIAL else c for c in value)
 
 
 def pattern_for_rule(rule):
@@ -139,7 +144,7 @@ def generate_conf(config):
         if not dest_name or not source_account or not folder:
             continue
         variant_name = account_variant_name(source_account, folder)
-        pattern = f"^{re.escape(variant_name)}$"
+        pattern = escape_glob(variant_name)
         lines.append(f'match account {_q(pattern)} action {_q(dest_name)}')
 
     for rule in catchall_rules:
