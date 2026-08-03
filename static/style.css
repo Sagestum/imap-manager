@@ -72,6 +72,15 @@ main {
 button.run-now { background: var(--ok); }
 button.run-now:hover { filter: brightness(1.1); }
 
+.history-group {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.history-group:first-of-type { border-top: none; }
+.history-group h3 { margin: 0 0 0.15rem; font-size: 0.95rem; }
+.history-group .hint { margin-top: 0; margin-bottom: 0.5rem; }
+
 .hint { color: var(--text-dim); font-size: 0.85rem; margin-top: -0.5rem; }
 
 table {

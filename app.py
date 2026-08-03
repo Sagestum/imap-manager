@@ -1,4 +1,6 @@
 """Leichtgewichtiges Webinterface zur visuellen Verwaltung einer fdm.conf."""
+import email
+import email.policy
 import imaplib
 import os
 import re
@@ -376,6 +378,110 @@ def imap_folders():
 
 
 app.add_url_rule("/api/test-and-fetch-folders", view_func=imap_folders, methods=["POST"])
+
+
+# ---------- Verlauf (live IMAP-Abfrage der Ziel-Ordner) ----------
+#
+# Es gibt bewusst kein eigenes Protokoll-Parsing der fdm-Laufausgabe: das
+# genaue Log-Format von fdm bei "-v" ist nicht zuverlaessig verifizierbar.
+# Stattdessen wird direkt der aktuelle Inhalt der Ziel-Ordner abgefragt -
+# das ist mit Standard-IMAP (FETCH ENVELOPE) robust und aussagekraeftig,
+# zeigt aber den *aktuellen* Ordnerinhalt, kein unveraenderliches Log. Sind
+# mehrere Regeln auf denselben Ziel-Ordner gemappt, ist die Zuordnung
+# "diese Mail kam durch genau diese Regel" nicht eindeutig auflösbar.
+
+def fetch_recent_messages(conn_type, server, port, user, password, folder, limit=15):
+    if conn_type == "imaps":
+        conn = imaplib.IMAP4_SSL(server, port, timeout=10)
+    else:
+        conn = imaplib.IMAP4(server, port, timeout=10)
+        try:
+            conn.starttls()
+        except imaplib.IMAP4.error:
+            pass
+
+    try:
+        conn.login(user, password)
+        typ, _ = conn.select(f'"{folder}"', readonly=True)
+        if typ != "OK":
+            raise imaplib.IMAP4.error(f'Ordner "{folder}" konnte nicht geoeffnet werden.')
+        typ, data = conn.search(None, "ALL")
+        if typ != "OK":
+            raise imaplib.IMAP4.error("IMAP SEARCH fehlgeschlagen.")
+
+        ids = data[0].split()
+        messages = []
+        for msg_id in reversed(ids[-limit:]):
+            typ, msg_data = conn.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+            if typ != "OK" or not msg_data or not isinstance(msg_data[0], tuple):
+                continue
+            headers = email.message_from_bytes(msg_data[0][1], policy=email.policy.default)
+            messages.append({
+                "from": str(headers.get("From", "")),
+                "subject": str(headers.get("Subject", "")),
+                "date": str(headers.get("Date", "")),
+            })
+        return messages
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
+
+
+def describe_rule(rule, accounts_by_id):
+    if rule.get("field") == "all":
+        return "Catch-All (Fallback)"
+    if rule.get("field") == "source":
+        acc = accounts_by_id.get(rule.get("source_account_id"))
+        return f'Zuordnung: {acc["name"] if acc else "?"} / {rule.get("source_folder", "?")}'
+    field_label = {
+        "from": "From", "subject": "Subject", "header": rule.get("header_name", "?"),
+    }.get(rule.get("field"), "?")
+    return f'Ausnahme: {field_label} {rule.get("match_type")} "{rule.get("value")}"'
+
+
+@app.route("/api/history", methods=["GET"])
+def history():
+    config = load_config()
+    actions_by_id = {a["id"]: a for a in config["actions"]}
+    accounts_by_id = {a["id"]: a for a in config["accounts"]}
+
+    dest_groups = {}
+    for rule in config["rules"]:
+        key = (rule.get("dest_action_id"), rule.get("dest_folder"))
+        if not key[0] or not key[1]:
+            continue
+        dest_groups.setdefault(key, []).append(describe_rule(rule, accounts_by_id))
+
+    results = []
+    for (action_id, folder), rule_descriptions in dest_groups.items():
+        action = actions_by_id.get(action_id)
+        entry = {
+            "action_name": action["name"] if action else "?",
+            "folder": folder,
+            "rules": rule_descriptions,
+            "messages": [],
+            "error": None,
+        }
+        if not action:
+            entry["error"] = "Ziel-Server existiert nicht mehr."
+        else:
+            try:
+                entry["messages"] = fetch_recent_messages(
+                    action["type"], action["server"], action["port"],
+                    action["user"], action["pass"], folder,
+                )
+            except imaplib.IMAP4.error as exc:
+                entry["error"] = f"IMAP-Fehler: {exc}"
+            except (socket.timeout, TimeoutError):
+                entry["error"] = "Zeitueberschreitung bei der Verbindung."
+            except (socket.gaierror, ConnectionRefusedError, OSError) as exc:
+                entry["error"] = f"Verbindungsfehler: {exc}"
+        results.append(entry)
+
+    results.sort(key=lambda e: (e["action_name"], e["folder"]))
+    return jsonify({"folders": results})
 
 
 # ---------- Rules ----------

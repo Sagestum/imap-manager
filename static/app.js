@@ -794,4 +794,68 @@ el("btn-run-now").addEventListener("click", async () => {
   }
 });
 
+// ---------- Verlauf ----------
+
+function renderHistory(folders) {
+  const box = el("history-results");
+  box.innerHTML = "";
+  if (!folders.length) {
+    box.innerHTML = '<p class="hint">Keine Ziel-Ordner mit zugeordneten Regeln gefunden.</p>';
+    return;
+  }
+  for (const group of folders) {
+    const section = document.createElement("div");
+    section.className = "history-group";
+
+    const title = document.createElement("h3");
+    title.innerHTML = `<code>${escapeHtml(group.action_name)} / ${escapeHtml(group.folder)}</code>`;
+    section.appendChild(title);
+
+    const rulesLine = document.createElement("p");
+    rulesLine.className = "hint";
+    rulesLine.textContent = "Regel(n): " + group.rules.join(" · ");
+    section.appendChild(rulesLine);
+
+    if (group.error) {
+      const err = document.createElement("div");
+      err.className = "warning-item";
+      err.textContent = group.error;
+      section.appendChild(err);
+    } else if (!group.messages.length) {
+      const empty = document.createElement("p");
+      empty.className = "hint";
+      empty.textContent = "Keine Mails in diesem Ordner gefunden.";
+      section.appendChild(empty);
+    } else {
+      const table = document.createElement("table");
+      table.innerHTML = "<thead><tr><th>Datum</th><th>Von</th><th>Betreff</th></tr></thead>";
+      const tbody = document.createElement("tbody");
+      for (const msg of group.messages) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${escapeHtml(msg.date)}</td><td>${escapeHtml(msg.from)}</td><td>${escapeHtml(msg.subject)}</td>`;
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      section.appendChild(table);
+    }
+    box.appendChild(section);
+  }
+}
+
+el("btn-load-history").addEventListener("click", async () => {
+  const btn = el("btn-load-history");
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = "Lade ...";
+  try {
+    const res = await api("/api/history");
+    renderHistory(res.folders);
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
 loadAll();
