@@ -4,14 +4,27 @@ services:
     image: imap-manager:latest
     container_name: imap-manager
     restart: unless-stopped
-    ports:
-      - "5000:5000"
+    expose:
+      - "5000"
     volumes:
       - imap_manager_data:/app/data
       - imap_manager_export:/app/export
     environment:
       - FDM_WEBUI_HOST=0.0.0.0
       - FDM_WEBUI_PORT=5000
+      # nginx-proxy liest diese Variablen per Docker-Socket aus und baut daraus die vhost-Config
+      - VIRTUAL_HOST=${VIRTUAL_HOST:-imap-manager.example.com}
+      - VIRTUAL_PORT=5000
+      # nur relevant, falls acme-companion (LetsEncrypt) neben nginx-proxy laeuft
+      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST:-imap-manager.example.com}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: ${PROXY_NETWORK:-nginx-proxy}
+    external: true
 
 volumes:
   imap_manager_data:
