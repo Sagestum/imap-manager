@@ -26,6 +26,13 @@ RUN git init /usr/src/fdm \
     && cd / \
     && rm -rf /usr/src/fdm
 
+# fdm faellt fuer die eigentliche Fetch-Arbeit per Privilege-Separation auf
+# einen unprivilegierten Nutzer "_fdm" zurueck (compiled-in default in diesem
+# Upstream-Build, anders als das alte Debian-Paket, das intern "root" nutzte).
+# Ohne diesen Systemnutzer bricht jeder Lauf sofort mit "can't find user:
+# _fdm" ab - verifiziert lokal, dass das Anlegen des Users das behebt.
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin _fdm
+
 COPY runner/entrypoint.sh /entrypoint.sh
 COPY VERSION /VERSION
 RUN chmod +x /entrypoint.sh
