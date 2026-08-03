@@ -57,7 +57,15 @@ touch "$LOCK_FILE"
 # beide Wege ueber denselben Lock und dieselbe sequentielle Verarbeitung
 # laufen. Ausgabe geht an die stdout/stderr des Containers (PID 1), damit sie
 # in "docker logs" auftaucht - cron erbt sonst keine offenen Deskriptoren.
-echo "$CRON_SCHEDULE root /entrypoint.sh --run-once >>/proc/1/fd/1 2>>/proc/1/fd/2" > /etc/cron.d/fdm-runner
+# PATH explizit setzen: cron startet Jobs sonst mit einem minimalen
+# Standard-PATH ohne /usr/local/bin, wo "make install" fdm hinlegt - ohne
+# das schlaegt jeder Cron-Lauf mit "fdm: not found" fehl (der manuelle
+# Trigger-Pfad unten ist davon nicht betroffen, da er als Kindprozess dieses
+# schon laufenden Skripts dessen volles PATH erbt).
+{
+    echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    echo "$CRON_SCHEDULE root /entrypoint.sh --run-once >>/proc/1/fd/1 2>>/proc/1/fd/2"
+} > /etc/cron.d/fdm-runner
 chmod 0644 /etc/cron.d/fdm-runner
 
 cron -f &
