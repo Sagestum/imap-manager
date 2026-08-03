@@ -41,7 +41,12 @@ sie sich nicht überschneiden, und verarbeiten die Konten nacheinander statt par
 `fdm-runner` baut `fdm` aus einem gepinnten Upstream-Commit selbst (siehe
 [`runner/Dockerfile`](runner/Dockerfile)), **nicht** aus dem Debian/Ubuntu-Paket — das ist ein
 Snapshot von Dezember 2018 mit einem bekannten Bug bei der IMAP-`APPEND`-Größenberechnung, der bei
-echten Zustellungen zu `BAD Could not parse command`-Fehlern führt.
+echten Zustellungen zu `BAD Could not parse command`-Fehlern führt. Zusätzlich wird beim Build ein
+kleiner Patch angewendet ([`runner/patches/fdm-xyzzy-append-size.patch`](runner/patches/fdm-xyzzy-append-size.patch)),
+der einen Gmail-spezifischen Sonderfall in `deliver-imap.c` entfernt: fdm verwarf dort absichtlich
+seine korrekt berechnete Nachrichtengröße zugunsten der Originalgröße *vor* Einfügen seiner eigenen
+`Received:`-Kopfzeile, was die deklarierte IMAP-Literal-Länge bei jeder echten Zustellung an Gmail
+zu kurz machte und ebenfalls zu `BAD Could not parse command` führte.
 
 ## Starten
 
