@@ -28,19 +28,6 @@ def escape_glob(value):
     return "".join(f"\\{c}" if c in _GLOB_SPECIAL else c for c in value)
 
 
-def pattern_for_rule(rule):
-    """Baut aus Matching-Art + Eingabe den regulären Ausdruck fuer die Regel."""
-    match_type = rule.get("match_type")
-    value = rule.get("value", "")
-    if match_type == "regex":
-        return value
-    escaped = re.escape(value)
-    if match_type == "exact":
-        return f"^{escaped}$"
-    # "contains" (Standard)
-    return escaped
-
-
 def header_name_for_rule(rule):
     field = rule.get("field")
     if field == "from":
@@ -50,6 +37,31 @@ def header_name_for_rule(rule):
     if field == "header":
         return rule.get("header_name", "").strip() or "X-Custom"
     return None
+
+
+def header_match_pattern(rule):
+    """Baut den vollstaendigen Regex, der eine einzelne Kopfzeile (z. B. "From") matcht.
+
+    fdm kennt kein eigenes "match header <name> ..."-Statement - "header" ist zwar ein
+    reserviertes Lexer-Token, hat in parse.y aber keine Grammatikregel und fuehrt daher
+    IMMER zu einem Syntax-Fehler. Regulaere Ausdruecke lassen sich nur gegen den
+    gesamten Header-Block pruefen ("in headers", siehe fdm.conf(5)). Um trotzdem gezielt
+    eine Kopfzeile zu treffen, wird ihr Name als Zeilenanfang-Anker vorangestellt - fdm
+    compiliert Regexe mit REG_NEWLINE, wodurch "^"/"$" bei jeder Zeile im Block greifen,
+    nicht nur am Anfang/Ende des gesamten Blocks.
+    """
+    header = header_name_for_rule(rule)
+    match_type = rule.get("match_type")
+    value = rule.get("value", "")
+    value_pattern = value if match_type == "regex" else re.escape(value)
+    prefix = f"^{re.escape(header)}:"
+    if match_type == "exact":
+        # [[:space:]] statt \s/\t: fdm entwertet Backslash-Escapes wie \t beim
+        # Einlesen des Strings, bevor der Rest ueberhaupt an regcomp geht - die
+        # POSIX-Zeichenklasse kommt ganz ohne Backslash aus und ist eindeutig.
+        return f"{prefix}[[:space:]]*{value_pattern}$"
+    # "contains" (Standard) und "regex"
+    return f"{prefix}.*{value_pattern}"
 
 
 def _dest_name_for_rule(rule, actions_by_id):
@@ -128,10 +140,9 @@ def generate_conf(config):
         dest_name = _dest_name_for_rule(rule, actions_by_id)
         if not dest_name:
             continue
-        header = header_name_for_rule(rule)
-        pattern = pattern_for_rule(rule)
+        pattern = header_match_pattern(rule)
         lines.append(
-            f'match header {_q(header)} regex {_q(pattern)} action {_q(dest_name)}'
+            f'match {_q(pattern)} in headers action {_q(dest_name)}'
         )
 
     if mapping_rules:
