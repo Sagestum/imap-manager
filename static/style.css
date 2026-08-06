@@ -183,45 +183,6 @@ button.secondary:hover { color: var(--text); border-color: var(--text-dim); }
 button.danger { background: var(--danger); }
 button.danger:hover { background: var(--danger-hover); }
 
-.icon-btn {
-  background: transparent;
-  color: var(--text-dim);
-  padding: 0.2rem 0.5rem;
-}
-.icon-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
-
-#rules-list {
-  list-style: none;
-  margin: 0 0 1rem;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.rule-item {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  background: #0f1115;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.5rem 0.7rem;
-  cursor: grab;
-}
-
-.rule-item.dragging { opacity: 0.4; }
-.rule-item .drag-handle { color: var(--text-dim); }
-.rule-item .rule-body { flex: 1; font-size: 0.88rem; }
-.rule-item .rule-body code {
-  background: rgba(79,140,255,0.12);
-  color: var(--accent-hover);
-  padding: 0.05rem 0.3rem;
-  border-radius: 4px;
-}
-.rule-item .rule-actions { display: flex; gap: 0.25rem; }
-.rule-item.catchall { border-color: var(--ok); }
-
 pre#preview {
   background: #0a0c10;
   border: 1px solid var(--border);

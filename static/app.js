@@ -7,12 +7,8 @@ let currentDestFolders = [];
 const el = (id) => document.getElementById(id);
 const accountForm = el("account-form");
 const actionForm = el("action-form");
-const exceptionForm = el("exception-form");
 const mappingForm = el("mapping-form");
 const catchallForm = el("catchall-form");
-
-const EXCEPTION_FIELDS = ["from", "subject", "header"];
-const isExceptionField = (field) => EXCEPTION_FIELDS.includes(field);
 
 // ---------- Helpers ----------
 
@@ -58,16 +54,6 @@ function makeButton(label, handler, danger = false) {
   btn.textContent = label;
   btn.className = danger ? "danger" : "secondary";
   btn.style.marginLeft = "0.3rem";
-  btn.addEventListener("click", handler);
-  return btn;
-}
-
-function makeIconButton(label, handler, disabled = false) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.textContent = label;
-  btn.className = "icon-btn";
-  btn.disabled = disabled;
   btn.addEventListener("click", handler);
   return btn;
 }
@@ -129,10 +115,6 @@ function resetForm(form, name) {
     el("dest-folder-select").innerHTML = "";
     el("btn-add-dest-folder").style.display = "none";
   }
-  if (name === "exception") {
-    updateExceptionFormVisibility();
-    resetDependentFolderSelect(exceptionForm.querySelector('[name="dest_folder"]'));
-  }
   if (name === "mapping") {
     resetDependentFolderSelect(mappingForm.querySelector('[name="source_folder"]'));
     resetDependentFolderSelect(mappingForm.querySelector('[name="dest_folder"]'));
@@ -148,7 +130,6 @@ async function loadAll() {
   state.rules = config.rules;
   renderAccounts();
   renderActions();
-  renderExceptions();
   renderMappings();
   renderCatchall();
   refreshPreview();
@@ -202,7 +183,7 @@ function renderActions() {
     tbody.appendChild(tr);
   }
 
-  for (const form of [exceptionForm, mappingForm, catchallForm]) {
+  for (const form of [mappingForm, catchallForm]) {
     const destSelect = form.querySelector('[name="dest_action_id"]');
     populateSelect(destSelect, actionsWithFolders(), "Ziel-Server waehlen ...");
     updateDependentFolderSelect(
@@ -444,163 +425,6 @@ async function deleteRule(rule) {
   }
 }
 
-// ---------- Ausnahmeregeln ----------
-
-function updateExceptionFormVisibility() {
-  const field = exceptionForm.querySelector('[name="field"]').value;
-  const headerInput = exceptionForm.querySelector('[name="header_name"]');
-  headerInput.style.display = field === "header" ? "" : "none";
-  headerInput.required = field === "header";
-}
-
-exceptionForm.querySelector('[name="field"]').addEventListener("change", updateExceptionFormVisibility);
-updateExceptionFormVisibility();
-
-exceptionForm.querySelector('[name="dest_action_id"]').addEventListener("change", (e) => {
-  updateDependentFolderSelect(
-    e.target, exceptionForm.querySelector('[name="dest_folder"]'),
-    actionsWithFolders, (a) => a.dest_folders,
-  );
-});
-
-exceptionForm.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const data = formToObject(exceptionForm);
-  const id = data.id;
-  try {
-    if (id) {
-      await api(`/api/rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
-      toast("Ausnahmeregel aktualisiert.", "success");
-    } else {
-      await api("/api/rules", { method: "POST", body: JSON.stringify(data) });
-      toast("Ausnahmeregel angelegt.", "success");
-    }
-    resetForm(exceptionForm, "exception");
-    await loadAll();
-  } catch (err) {
-    toast(err.message, "error");
-  }
-});
-
-function exceptionDestLabel(rule) {
-  const action = state.actions.find((a) => a.id === rule.dest_action_id);
-  return `${action ? escapeHtml(action.name) : "?"} / ${escapeHtml(rule.dest_folder || "?")}`;
-}
-
-function exceptionLabel(rule) {
-  const fieldLabel = { from: "From", subject: "Subject", header: rule.header_name }[rule.field];
-  const matchLabel = { contains: "enthaelt", exact: "exakt", regex: "regex" }[rule.match_type];
-  return `<code>${escapeHtml(fieldLabel)}</code> ${matchLabel} <code>${escapeHtml(rule.value)}</code> &rarr; <code>${exceptionDestLabel(rule)}</code>`;
-}
-
-function getExceptions() {
-  return state.rules.filter((r) => isExceptionField(r.field));
-}
-
-function setExceptionOrder(newExceptions) {
-  const others = state.rules.filter((r) => !isExceptionField(r.field));
-  state.rules = [...newExceptions, ...others];
-}
-
-function renderExceptions() {
-  const list = el("exceptions-list");
-  list.innerHTML = "";
-  const exceptions = getExceptions();
-  exceptions.forEach((rule, idx) => {
-    const li = document.createElement("li");
-    li.className = "rule-item";
-    li.draggable = true;
-    li.dataset.id = rule.id;
-
-    const handle = document.createElement("span");
-    handle.className = "drag-handle";
-    handle.textContent = "☰";
-
-    const body = document.createElement("span");
-    body.className = "rule-body";
-    body.innerHTML = exceptionLabel(rule);
-
-    const actionsSpan = document.createElement("span");
-    actionsSpan.className = "rule-actions";
-    actionsSpan.appendChild(makeIconButton("↑", () => moveException(idx, -1), idx === 0));
-    actionsSpan.appendChild(makeIconButton("↓", () => moveException(idx, 1), idx === exceptions.length - 1));
-    actionsSpan.appendChild(makeButton("Bearbeiten", () => editException(rule)));
-    actionsSpan.appendChild(makeButton("Loeschen", () => deleteRule(rule), true));
-
-    li.appendChild(handle);
-    li.appendChild(body);
-    li.appendChild(actionsSpan);
-    list.appendChild(li);
-  });
-  attachExceptionDragHandlers();
-}
-
-async function persistExceptionOrder(newExceptionIds) {
-  const others = state.rules.filter((r) => !isExceptionField(r.field)).map((r) => r.id);
-  const order = [...newExceptionIds, ...others];
-  try {
-    await api("/api/rules/reorder", { method: "POST", body: JSON.stringify({ order }) });
-    await refreshPreview();
-  } catch (err) {
-    toast(err.message, "error");
-    await loadAll();
-  }
-}
-
-function moveException(idx, delta) {
-  const exceptions = getExceptions();
-  const target = idx + delta;
-  if (target < 0 || target >= exceptions.length) return;
-  const [item] = exceptions.splice(idx, 1);
-  exceptions.splice(target, 0, item);
-  setExceptionOrder(exceptions);
-  renderExceptions();
-  persistExceptionOrder(exceptions.map((r) => r.id));
-}
-
-let dragExceptionId = null;
-
-function attachExceptionDragHandlers() {
-  document.querySelectorAll("#exceptions-list .rule-item").forEach((item) => {
-    item.addEventListener("dragstart", () => {
-      dragExceptionId = item.dataset.id;
-      item.classList.add("dragging");
-    });
-    item.addEventListener("dragend", () => {
-      item.classList.remove("dragging");
-      dragExceptionId = null;
-    });
-    item.addEventListener("dragover", (e) => e.preventDefault());
-    item.addEventListener("drop", (e) => {
-      e.preventDefault();
-      const targetId = item.dataset.id;
-      if (!dragExceptionId || dragExceptionId === targetId) return;
-      const exceptions = getExceptions();
-      const fromIdx = exceptions.findIndex((r) => r.id === dragExceptionId);
-      const toIdx = exceptions.findIndex((r) => r.id === targetId);
-      const [moved] = exceptions.splice(fromIdx, 1);
-      exceptions.splice(toIdx, 0, moved);
-      setExceptionOrder(exceptions);
-      renderExceptions();
-      persistExceptionOrder(exceptions.map((r) => r.id));
-    });
-  });
-}
-
-function editException(rule) {
-  exceptionForm.querySelector('[name="id"]').value = rule.id;
-  exceptionForm.querySelector('[name="field"]').value = rule.field;
-  exceptionForm.querySelector('[name="header_name"]').value = rule.header_name || "";
-  exceptionForm.querySelector('[name="match_type"]').value = rule.match_type || "contains";
-  exceptionForm.querySelector('[name="value"]').value = rule.value || "";
-  const destSelect = exceptionForm.querySelector('[name="dest_action_id"]');
-  destSelect.value = rule.dest_action_id;
-  updateDependentFolderSelect(destSelect, exceptionForm.querySelector('[name="dest_folder"]'), actionsWithFolders, (a) => a.dest_folders);
-  exceptionForm.querySelector('[name="dest_folder"]').value = rule.dest_folder || "";
-  updateExceptionFormVisibility();
-  exceptionForm.scrollIntoView({ behavior: "smooth", block: "center" });
-}
-
 // ---------- Ordner-Zuordnungen ----------
 
 mappingForm.querySelector('[name="source_account_id"]').addEventListener("change", (e) => {
@@ -732,7 +556,7 @@ function renderCatchall() {
 document.querySelectorAll("[data-cancel]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const name = btn.dataset.cancel;
-    const forms = { account: accountForm, action: actionForm, exception: exceptionForm, mapping: mappingForm };
+    const forms = { account: accountForm, action: actionForm, mapping: mappingForm };
     resetForm(forms[name], name);
   });
 });
@@ -762,22 +586,6 @@ el("btn-download").addEventListener("click", () => {
   window.location.href = "/api/download";
 });
 
-async function saveToDisk(target) {
-  if (target === "/etc/fdm.conf") {
-    if (!confirm("Wirklich unter /etc/fdm.conf speichern? Dies erfordert entsprechende Schreibrechte.")) return;
-  }
-  try {
-    const res = await api("/api/save", { method: "POST", body: JSON.stringify({ target }) });
-    toast(`Gespeichert: ${res.saved_to}`, "success");
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
-el("btn-save-export").addEventListener("click", () => saveToDisk("export"));
-el("btn-save-home").addEventListener("click", () => saveToDisk("~/.fdm.conf"));
-el("btn-save-etc").addEventListener("click", () => saveToDisk("/etc/fdm.conf"));
-
 el("btn-run-now").addEventListener("click", async () => {
   const btn = el("btn-run-now");
   btn.disabled = true;
@@ -785,7 +593,7 @@ el("btn-run-now").addEventListener("click", async () => {
   btn.textContent = "Wird ausgefuehrt ...";
   try {
     const res = await api("/api/run-now", { method: "POST" });
-    toast(`Gespeichert unter ${res.saved_to}, fdm-runner wird ausloesen.`, "success");
+    toast(`Gespeichert (${res.mappings} Zuordnung(en)), Runner wird ausgeloest.`, "success");
   } catch (err) {
     toast(err.message, "error");
   } finally {

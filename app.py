@@ -1,4 +1,4 @@
-"""Leichtgewichtiges Webinterface zur visuellen Verwaltung einer fdm.conf."""
+"""Leichtgewichtiges Webinterface zur visuellen Verwaltung von imapsync-Ordner-Zuordnungen."""
 import email
 import email.policy
 import imaplib
@@ -13,7 +13,7 @@ from flask import Flask, jsonify, request, render_template, send_file, abort
 from werkzeug.exceptions import HTTPException
 import io
 
-from fdm_gen import generate_conf, validate_config
+from imapsync_gen import preview_lines, resolve_mappings, validate_config
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -45,6 +45,11 @@ _LOCK_FREE_DEFAULT = {"accounts": [], "actions": [], "rules": []}
 
 def migrate_config(data):
     """Hebt aeltere Datenstaende auf das aktuelle Schema (dest_folders/dest_action_id)."""
+    # Ausnahmeregeln (From/Subject/Header) gibt es seit dem Umstieg auf imapsync nicht mehr -
+    # imapsync kennt keine Regel-Engine, Sonderfaelle werden ueber die Ordnerauswahl im
+    # Quell-Konto abgebildet. Altbestand wird beim Laden stillschweigend verworfen.
+    data["rules"] = [r for r in data["rules"] if r.get("field") in ("source", "all")]
+
     for account in data["accounts"]:
         account.setdefault("source_folders", [])
 
@@ -100,8 +105,7 @@ def new_id():
 
 ACCOUNT_TYPES = {"pop3", "pop3s", "imap", "imaps"}
 ACTION_TYPES = {"imap", "imaps"}
-MATCH_TYPES = {"contains", "exact", "regex"}
-FIELD_TYPES = {"from", "subject", "header", "source", "all"}
+FIELD_TYPES = {"source", "all"}
 
 
 def require_fields(payload, fields):
@@ -446,13 +450,8 @@ def fetch_recent_messages(conn_type, server, port, user, password, folder, limit
 def describe_rule(rule, accounts_by_id):
     if rule.get("field") == "all":
         return "Catch-All (Fallback)"
-    if rule.get("field") == "source":
-        acc = accounts_by_id.get(rule.get("source_account_id"))
-        return f'Zuordnung: {acc["name"] if acc else "?"} / {rule.get("source_folder", "?")}'
-    field_label = {
-        "from": "From", "subject": "Subject", "header": rule.get("header_name", "?"),
-    }.get(rule.get("field"), "?")
-    return f'Ausnahme: {field_label} {rule.get("match_type")} "{rule.get("value")}"'
+    acc = accounts_by_id.get(rule.get("source_account_id"))
+    return f'Zuordnung: {acc["name"] if acc else "?"} / {rule.get("source_folder", "?")}'
 
 
 @app.route("/api/history", methods=["GET"])
@@ -558,25 +557,11 @@ def create_rule():
     if field == "all":
         if any(r["field"] == "all" for r in config["rules"]):
             abort(400, description="Es existiert bereits eine Catch-All-Regel.")
-    elif field == "source":
+    else:
         source_account_id, source_folder = resolve_source_selection(payload, config)
         check_duplicate_mapping(config, source_account_id, source_folder)
         rule["source_account_id"] = source_account_id
         rule["source_folder"] = source_folder
-    else:
-        match_type = payload.get("match_type")
-        if match_type not in MATCH_TYPES:
-            abort(400, description="Ungueltige Matching-Art.")
-        value = payload.get("value", "").strip()
-        if not value:
-            abort(400, description="Wert fuer das Matching darf nicht leer sein.")
-        rule["match_type"] = match_type
-        rule["value"] = value
-        if field == "header":
-            header_name = payload.get("header_name", "").strip()
-            if not header_name:
-                abort(400, description="Headername darf nicht leer sein.")
-            rule["header_name"] = header_name
 
     config["rules"].append(rule)
     save_config(config)
@@ -607,25 +592,11 @@ def update_rule(rule_id):
     if field == "all":
         if any(r["field"] == "all" and r["id"] != rule_id for r in config["rules"]):
             abort(400, description="Es existiert bereits eine Catch-All-Regel.")
-    elif field == "source":
+    else:
         source_account_id, source_folder = resolve_source_selection(payload, config)
         check_duplicate_mapping(config, source_account_id, source_folder, exclude_rule_id=rule_id)
         new_rule["source_account_id"] = source_account_id
         new_rule["source_folder"] = source_folder
-    else:
-        match_type = payload.get("match_type")
-        if match_type not in MATCH_TYPES:
-            abort(400, description="Ungueltige Matching-Art.")
-        value = payload.get("value", "").strip()
-        if not value:
-            abort(400, description="Wert fuer das Matching darf nicht leer sein.")
-        new_rule["match_type"] = match_type
-        new_rule["value"] = value
-        if field == "header":
-            header_name = payload.get("header_name", "").strip()
-            if not header_name:
-                abort(400, description="Headername darf nicht leer sein.")
-            new_rule["header_name"] = header_name
 
     idx = config["rules"].index(rule)
     config["rules"][idx] = new_rule
@@ -644,30 +615,14 @@ def delete_rule(rule_id):
     return "", 204
 
 
-@app.route("/api/rules/reorder", methods=["POST"])
-def reorder_rules():
-    payload = request.get_json(force=True) or {}
-    order = payload.get("order")
-    if not isinstance(order, list):
-        abort(400, description="order muss eine Liste von Regel-IDs sein.")
-
-    config = load_config()
-    by_id = {r["id"]: r for r in config["rules"]}
-    if set(order) != set(by_id.keys()):
-        abort(400, description="order muss exakt alle vorhandenen Regel-IDs enthalten.")
-
-    config["rules"] = [by_id[i] for i in order]
-    save_config(config)
-    return jsonify(config["rules"])
-
-
 # ---------- Vorschau / Export ----------
 
 @app.route("/api/preview", methods=["GET"])
 def preview():
     config = load_config()
+    lines, _mappings = preview_lines(config)
     return jsonify({
-        "conf": generate_conf(config),
+        "conf": "\n".join(lines),
         "warnings": validate_config(config),
     })
 
@@ -675,71 +630,56 @@ def preview():
 @app.route("/api/download", methods=["GET"])
 def download():
     config = load_config()
-    conf_text = generate_conf(config)
-    buf = io.BytesIO(conf_text.encode("utf-8"))
+    lines, _mappings = preview_lines(config)
+    buf = io.BytesIO(("\n".join(lines) + "\n").encode("utf-8"))
     return send_file(
         buf,
         mimetype="text/plain",
         as_attachment=True,
-        download_name="fdm.conf",
+        download_name="imapsync-plan.txt",
     )
-
-
-EXPORT_DIR = Path(os.environ.get("FDM_EXPORT_DIR", str(BASE_DIR / "export")))
-
-ALLOWED_SAVE_TARGETS = {
-    "~/.fdm.conf": Path.home() / ".fdm.conf",
-    "/etc/fdm.conf": Path("/etc/fdm.conf"),
-    "export": EXPORT_DIR / "fdm.conf",
-}
-
-
-@app.route("/api/save", methods=["POST"])
-def save_to_disk():
-    payload = request.get_json(force=True) or {}
-    target = payload.get("target")
-    if target not in ALLOWED_SAVE_TARGETS:
-        abort(400, description="Unbekanntes Ziel. Erlaubt: ~/.fdm.conf oder /etc/fdm.conf.")
-
-    dest = ALLOWED_SAVE_TARGETS[target]
-    config = load_config()
-    conf_text = generate_conf(config)
-
-    try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        with open(dest, "w", encoding="utf-8") as f:
-            f.write(conf_text)
-        os.chmod(dest, stat.S_IRUSR | stat.S_IWUSR)  # 600, enthaelt Klartext-Passwoerter
-    except PermissionError:
-        abort(403, description=f"Keine Schreibrechte fuer {dest}. Ggf. mit sudo starten.")
-    except OSError as exc:
-        abort(500, description=f"Fehler beim Schreiben von {dest}: {exc}")
-
-    return jsonify({"saved_to": str(dest)})
 
 
 RUN_CONFIG_DIR = Path(os.environ.get("FDM_CONFIG_DIR", str(BASE_DIR / "config")))
 RUN_TRIGGER_FILE = RUN_CONFIG_DIR / ".run_now"
 
 
+def _serialize_mapping(mapping):
+    acc, act = mapping["source_account"], mapping["dest_action"]
+    return {
+        "source_account": {
+            "name": acc["name"], "type": acc["type"], "server": acc["server"],
+            "port": acc["port"], "user": acc["user"], "pass": acc["pass"],
+        },
+        "source_folder": mapping["source_folder"],
+        "dest_action": {
+            "name": act["name"], "type": act["type"], "server": act["server"],
+            "port": act["port"], "user": act["user"], "pass": act["pass"],
+        },
+        "dest_folder": mapping["dest_folder"],
+    }
+
+
 @app.route("/api/run-now", methods=["POST"])
 def run_now():
-    """Schreibt fdm.conf ins geteilte Volume und legt eine Trigger-Datei an,
-    die der fdm-runner-Container abfragt (siehe docker-compose.yml)."""
+    """Schreibt die aufgeloesten Ordner-Zuordnungen als sync_plan.json ins geteilte Volume und
+    legt eine Trigger-Datei an, die der fdm-runner-Container abfragt (siehe docker-compose.yml).
+    """
     config = load_config()
-    conf_text = generate_conf(config)
-    dest = RUN_CONFIG_DIR / "fdm.conf"
+    mappings = resolve_mappings(config)
+    plan = [_serialize_mapping(m) for m in mappings]
+    dest = RUN_CONFIG_DIR / "sync_plan.json"
 
     try:
         RUN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(dest, "w", encoding="utf-8") as f:
-            f.write(conf_text)
+            json.dump(plan, f, indent=2, ensure_ascii=False)
         os.chmod(dest, stat.S_IRUSR | stat.S_IWUSR)  # 600, enthaelt Klartext-Passwoerter
         RUN_TRIGGER_FILE.touch()
     except OSError as exc:
         abort(500, description=f"Fehler beim Speichern/Ausloesen: {exc}")
 
-    return jsonify({"saved_to": str(dest), "triggered": True})
+    return jsonify({"saved_to": str(dest), "triggered": True, "mappings": len(plan)})
 
 
 if __name__ == "__main__":

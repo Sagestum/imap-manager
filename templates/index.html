@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fdm.conf Manager</title>
+<title>imap-manager</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 <header>
-  <h1>fdm.conf Manager</h1>
-  <p class="subtitle">Visuelle Verwaltung von Quell-Konten, Ziel-Servern und Verarbeitungsregeln fuer fdm</p>
+  <h1>imap-manager</h1>
+  <p class="subtitle">Visuelle Verwaltung von Quell-Konten, Ziel-Servern und Ordner-Zuordnungen fuer imapsync</p>
   <p class="version" id="app-version"></p>
 </header>
 
@@ -82,43 +82,10 @@
     </form>
   </section>
 
-  <!-- AUSNAHMEREGELN -->
-  <section class="card">
-    <h2><span class="step-badge">1</span> Ausnahmeregeln <span class="hint-inline">greifen zuerst</span></h2>
-    <p class="hint">Werden vor den Ordner-Zuordnungen geprueft, unabhaengig davon aus welchem Quell-Ordner die Mail kommt. Reihenfolge per Drag &amp; Drop oder Pfeiltasten aendern.</p>
-    <ul id="exceptions-list"></ul>
-    <form id="exception-form" class="entity-form">
-      <input type="hidden" name="id">
-      <select name="field" required>
-        <option value="from">Absender (From)</option>
-        <option value="subject">Betreff (Subject)</option>
-        <option value="header">Beliebiger Header</option>
-      </select>
-      <input type="text" name="header_name" placeholder='Headername (z.B. List-Unsubscribe)' style="display:none;">
-      <select name="match_type">
-        <option value="contains">Enthaelt String</option>
-        <option value="exact">Exakte Uebereinstimmung</option>
-        <option value="regex">Regulaerer Ausdruck</option>
-      </select>
-      <input type="text" name="value" placeholder="Wert / Regex">
-      <span class="arrow">&rarr;</span>
-      <select name="dest_action_id" required>
-        <option value="">Ziel-Server waehlen ...</option>
-      </select>
-      <select name="dest_folder" required>
-        <option value="">Ziel-Ordner waehlen ...</option>
-      </select>
-      <div class="form-actions">
-        <button type="submit">Ausnahmeregel speichern</button>
-        <button type="button" class="secondary" data-cancel="exception">Abbrechen</button>
-      </div>
-    </form>
-  </section>
-
   <!-- ORDNER-ZUORDNUNGEN -->
   <section class="card">
-    <h2><span class="step-badge">2</span> Ordner-Zuordnungen <span class="hint-inline">Standard-Verarbeitung</span></h2>
-    <p class="hint">Legt fest, wohin Mails aus einem bestimmten Quell-Ordner standardmaessig verschoben werden. Greift NACH den Ausnahmeregeln.</p>
+    <h2><span class="step-badge">1</span> Ordner-Zuordnungen <span class="hint-inline">Standard-Verarbeitung</span></h2>
+    <p class="hint">Legt fest, wohin Mails aus einem bestimmten Quell-Ordner synchronisiert werden. Sonderfaelle (z.B. "Newsletter landet in Spam") ueber einen eigenen Quell-Ordner abbilden, z.B. den Spam-Ordner des Anbieters als Quell-Ordner mappen.</p>
     <table id="mappings-table">
       <thead>
         <tr><th>Quelle</th><th></th><th>Ziel</th><th></th></tr>
@@ -149,8 +116,8 @@
 
   <!-- CATCH-ALL -->
   <section class="card">
-    <h2><span class="step-badge">3</span> Catch-All <span class="hint-inline">Fallback</span></h2>
-    <p class="hint">Greift nur, wenn weder eine Ausnahmeregel noch eine Ordner-Zuordnung passt. Optional, maximal eine Regel.</p>
+    <h2><span class="step-badge">2</span> Catch-All <span class="hint-inline">Fallback</span></h2>
+    <p class="hint">Greift nur, wenn keine Ordner-Zuordnung passt. Optional, maximal eine Regel.</p>
     <div id="catchall-display"></div>
     <form id="catchall-form" class="entity-form">
       <input type="hidden" name="id">
@@ -170,9 +137,10 @@
   <section class="card">
     <h2>Verlauf</h2>
     <p class="hint">
-      Fragt live per IMAP die zuletzt angekommenen Mails in jedem Ziel-Ordner ab (kein eigenes fdm-Log-Parsing,
-      daher zuverlaessiger). Zeigt den aktuellen Ordnerinhalt, kein dauerhaftes Protokoll - und wenn mehrere
-      Regeln auf denselben Ziel-Ordner zeigen, ist nicht eindeutig, welche davon genau gegriffen hat.
+      Fragt live per IMAP die zuletzt angekommenen Mails in jedem Ziel-Ordner ab (kein eigenes
+      Log-Parsing, daher zuverlaessiger). Zeigt den aktuellen Ordnerinhalt, kein dauerhaftes
+      Protokoll - und wenn mehrere Zuordnungen auf denselben Ziel-Ordner zeigen, ist nicht
+      eindeutig, welche davon genau gegriffen hat.
     </p>
     <button id="btn-load-history" type="button">Verlauf laden</button>
     <div id="history-results"></div>
@@ -185,10 +153,7 @@
     <pre id="preview"></pre>
     <div class="form-actions">
       <button id="btn-refresh-preview" type="button">Vorschau aktualisieren</button>
-      <button id="btn-download" type="button">fdm.conf herunterladen</button>
-      <button id="btn-save-export" type="button">In Export-Verzeichnis speichern</button>
-      <button id="btn-save-home" type="button">Speichern unter ~/.fdm.conf</button>
-      <button id="btn-save-etc" type="button" class="danger">Speichern unter /etc/fdm.conf</button>
+      <button id="btn-download" type="button">Sync-Plan herunterladen</button>
       <button id="btn-run-now" type="button" class="run-now">Speichern &amp; Jetzt ausfuehren</button>
     </div>
   </section>
