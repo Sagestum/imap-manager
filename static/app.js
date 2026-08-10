@@ -666,6 +666,396 @@ el("btn-load-history").addEventListener("click", async () => {
   }
 });
 
+// ---------- Statistik ----------
+//
+// Liniendiagramm (Nachrichten pro Konto und Tag), reines Vanilla-SVG ohne Chart-Library, passend
+// zum Rest der App. Farb-Slots und Kontrast-Vorgaben stammen aus der dataviz-Skill-Palette,
+// validiert gegen --card-bg als Chart-Oberflaeche (siehe Kommentar in style.css).
+
+const STATS_SVG_NS = "http://www.w3.org/2000/svg";
+const STATS_COLOR_VARS = [
+  "--series-1", "--series-2", "--series-3", "--series-4",
+  "--series-5", "--series-6", "--series-7",
+];
+const STATS_OTHER_COLOR = "var(--text-dim)";
+const STATS_MAX_SLOTS = STATS_COLOR_VARS.length;
+
+let statsChartState = null; // { hidden: Set<string> } - welche Legenden-Eintraege ausgeblendet sind
+let statsShowTable = false;
+
+function niceMax(value) {
+  if (value <= 0) return 1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+  const norm = value / magnitude;
+  const niceNorm = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return niceNorm * magnitude;
+}
+
+function formatDayLabel(iso) {
+  const [, m, d] = iso.split("-");
+  return `${d}.${m}.`;
+}
+
+// Baut die (ggf. auf STATS_MAX_SLOTS zusammengefaltete) Serienliste, sortiert aufsteigend nach
+// Gesamtsumme, damit beim Zeichnen die aktivsten Postfaecher zuletzt (also oben) liegen. Mehr als
+// STATS_MAX_SLOTS Konten werden zu einer "Andere"-Sammelserie zusammengefasst statt weitere,
+// nicht mehr unterscheidbare Farben zu erzeugen.
+function buildStatsSeries(days, accounts, series, totals) {
+  const sorted = [...accounts].sort((a, b) => (totals[b] || 0) - (totals[a] || 0));
+  const shown = sorted.slice(0, STATS_MAX_SLOTS);
+  const overflow = sorted.slice(STATS_MAX_SLOTS);
+
+  const result = shown.map((name, i) => ({
+    name,
+    color: `var(${STATS_COLOR_VARS[i]})`,
+    values: series[name],
+    total: totals[name] || 0,
+  }));
+
+  if (overflow.length) {
+    const combined = new Array(days.length).fill(0);
+    let overflowTotal = 0;
+    for (const name of overflow) {
+      series[name].forEach((v, i) => { combined[i] += v; });
+      overflowTotal += totals[name] || 0;
+    }
+    result.push({
+      name: `Andere (${overflow.length} Konten)`,
+      color: STATS_OTHER_COLOR,
+      values: combined,
+      total: overflowTotal,
+    });
+  }
+
+  return result.sort((a, b) => a.total - b.total);
+}
+
+function renderStatsChart(days, seriesList) {
+  const wrap = el("stats-chart");
+  wrap.innerHTML = "";
+
+  const W = 900, H = 300;
+  const margin = { top: 12, right: 14, bottom: 26, left: 42 };
+  const plotW = W - margin.left - margin.right;
+  const plotH = H - margin.top - margin.bottom;
+
+  const maxVal = niceMax(Math.max(1, ...seriesList.flatMap((s) => s.values)));
+  const tickCount = 4;
+  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => Math.round((maxVal / tickCount) * i));
+
+  const xAt = (i) => margin.left + (days.length > 1 ? (i / (days.length - 1)) * plotW : plotW / 2);
+  const yAt = (v) => margin.top + plotH - (v / maxVal) * plotH;
+
+  const svg = document.createElementNS(STATS_SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Nachrichten pro Postfach und Tag - Werte auch als Tabelle verfuegbar");
+
+  for (const t of yTicks) {
+    const y = yAt(t);
+    const line = document.createElementNS(STATS_SVG_NS, "line");
+    line.setAttribute("class", "stats-gridline");
+    line.setAttribute("x1", margin.left); line.setAttribute("x2", W - margin.right);
+    line.setAttribute("y1", y); line.setAttribute("y2", y);
+    svg.appendChild(line);
+
+    const label = document.createElementNS(STATS_SVG_NS, "text");
+    label.setAttribute("x", margin.left - 8); label.setAttribute("y", y + 3);
+    label.setAttribute("text-anchor", "end");
+    label.textContent = String(t);
+    svg.appendChild(label);
+  }
+
+  const axisLine = document.createElementNS(STATS_SVG_NS, "line");
+  axisLine.setAttribute("class", "stats-axis");
+  axisLine.setAttribute("x1", margin.left); axisLine.setAttribute("x2", W - margin.right);
+  axisLine.setAttribute("y1", margin.top + plotH); axisLine.setAttribute("y2", margin.top + plotH);
+  svg.appendChild(axisLine);
+
+  const targetTicks = 7;
+  const step = Math.max(1, Math.ceil(days.length / targetTicks));
+  for (let i = 0; i < days.length; i += step) {
+    const label = document.createElementNS(STATS_SVG_NS, "text");
+    label.setAttribute("x", xAt(i)); label.setAttribute("y", margin.top + plotH + 16);
+    label.setAttribute("text-anchor", "middle");
+    label.textContent = formatDayLabel(days[i]);
+    svg.appendChild(label);
+  }
+  if ((days.length - 1) % step !== 0) {
+    const label = document.createElementNS(STATS_SVG_NS, "text");
+    label.setAttribute("x", xAt(days.length - 1)); label.setAttribute("y", margin.top + plotH + 16);
+    label.setAttribute("text-anchor", "middle");
+    label.textContent = formatDayLabel(days[days.length - 1]);
+    svg.appendChild(label);
+  }
+
+  for (const s of seriesList) {
+    const points = s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+    const line = document.createElementNS(STATS_SVG_NS, "polyline");
+    line.setAttribute("class", "stats-line");
+    line.setAttribute("points", points);
+    line.setAttribute("stroke", s.color);
+    svg.appendChild(line);
+    s._pathEl = line;
+
+    const lastVal = s.values[s.values.length - 1];
+    const dot = document.createElementNS(STATS_SVG_NS, "circle");
+    dot.setAttribute("class", "stats-end-dot");
+    dot.setAttribute("cx", xAt(days.length - 1)); dot.setAttribute("cy", yAt(lastVal)); dot.setAttribute("r", 4);
+    dot.setAttribute("fill", s.color);
+    svg.appendChild(dot);
+    s._dotEl = dot;
+  }
+
+  const crosshairLine = document.createElementNS(STATS_SVG_NS, "line");
+  crosshairLine.setAttribute("class", "stats-crosshair-line");
+  crosshairLine.setAttribute("y1", margin.top); crosshairLine.setAttribute("y2", margin.top + plotH);
+  svg.appendChild(crosshairLine);
+
+  const crosshairDots = seriesList.map((s) => {
+    const dot = document.createElementNS(STATS_SVG_NS, "circle");
+    dot.setAttribute("class", "stats-crosshair-dot");
+    dot.setAttribute("r", 4);
+    dot.setAttribute("fill", s.color);
+    svg.appendChild(dot);
+    return dot;
+  });
+
+  const hitArea = document.createElementNS(STATS_SVG_NS, "rect");
+  hitArea.setAttribute("class", "stats-hit-area");
+  hitArea.setAttribute("x", margin.left); hitArea.setAttribute("y", margin.top);
+  hitArea.setAttribute("width", plotW); hitArea.setAttribute("height", plotH);
+  hitArea.setAttribute("tabindex", "0");
+  hitArea.setAttribute("role", "slider");
+  hitArea.setAttribute("aria-label", "Tag auswaehlen (Pfeiltasten zum Navigieren)");
+  svg.appendChild(hitArea);
+
+  const tooltip = el("stats-tooltip");
+
+  function showAt(index) {
+    index = Math.max(0, Math.min(days.length - 1, index));
+    hitArea.dataset.index = index;
+    const x = xAt(index);
+    crosshairLine.setAttribute("x1", x); crosshairLine.setAttribute("x2", x);
+    crosshairLine.style.opacity = 1;
+
+    tooltip.textContent = "";
+    const dateEl = document.createElement("div");
+    dateEl.className = "stats-tooltip-date";
+    dateEl.textContent = days[index];
+    tooltip.appendChild(dateEl);
+
+    seriesList.forEach((s, i) => {
+      const dot = crosshairDots[i];
+      const v = s.values[index];
+      const isHidden = statsChartState.hidden.has(s.name);
+      dot.setAttribute("cx", x); dot.setAttribute("cy", yAt(v));
+      dot.style.opacity = isHidden ? 0 : 1;
+      if (isHidden) return;
+
+      const row = document.createElement("div");
+      row.className = "stats-tooltip-row";
+      const key = document.createElement("span");
+      key.className = "stats-tooltip-key";
+      key.style.background = s.color;
+      const name = document.createElement("span");
+      name.className = "stats-tooltip-name";
+      name.textContent = s.name;
+      const val = document.createElement("span");
+      val.className = "stats-tooltip-value";
+      val.textContent = String(v);
+      row.appendChild(key); row.appendChild(name); row.appendChild(val);
+      tooltip.appendChild(row);
+    });
+
+    const wrapRect = el("stats-chart-wrap").getBoundingClientRect();
+    const svgRect = svg.getBoundingClientRect();
+    const scale = svgRect.width / W;
+    const px = svgRect.left - wrapRect.left + x * scale;
+    const py = svgRect.top - wrapRect.top + margin.top * scale;
+    const tooltipWidth = tooltip.offsetWidth || 160;
+    const left = Math.min(px + 12, Math.max(0, wrapRect.width - tooltipWidth - 4));
+    tooltip.style.transform = `translate(${left}px, ${py}px)`;
+    tooltip.classList.add("is-visible");
+  }
+
+  function hide() {
+    crosshairLine.style.opacity = 0;
+    crosshairDots.forEach((d) => { d.style.opacity = 0; });
+    tooltip.classList.remove("is-visible");
+  }
+
+  function indexFromPointer(evt) {
+    const rect = svg.getBoundingClientRect();
+    const relX = ((evt.clientX - rect.left) / rect.width) * W;
+    const ratio = plotW > 0 ? (relX - margin.left) / plotW : 0;
+    return Math.round(ratio * (days.length - 1));
+  }
+
+  hitArea.addEventListener("pointermove", (evt) => showAt(indexFromPointer(evt)));
+  hitArea.addEventListener("pointerleave", hide);
+  hitArea.addEventListener("focus", () => showAt(days.length - 1));
+  hitArea.addEventListener("blur", hide);
+  hitArea.addEventListener("keydown", (evt) => {
+    const current = Number(hitArea.dataset.index ?? days.length - 1);
+    let next = current;
+    if (evt.key === "ArrowLeft") next = current - 1;
+    else if (evt.key === "ArrowRight") next = current + 1;
+    else if (evt.key === "Home") next = 0;
+    else if (evt.key === "End") next = days.length - 1;
+    else return;
+    evt.preventDefault();
+    showAt(next);
+  });
+
+  wrap.appendChild(svg);
+}
+
+function renderStatsLegend(seriesList) {
+  const box = el("stats-legend");
+  box.innerHTML = "";
+  // Bei genau einer Serie sagt schon der Kartentitel, was gezeigt wird - eine Legende mit einem
+  // Eintrag wuerde nur den Titel wiederholen.
+  if (seriesList.length <= 1) return;
+
+  const byTotalDesc = [...seriesList].sort((a, b) => b.total - a.total);
+  for (const s of byTotalDesc) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "stats-legend-item";
+    btn.setAttribute("aria-pressed", "true");
+
+    const swatch = document.createElementNS(STATS_SVG_NS, "svg");
+    swatch.setAttribute("width", "16"); swatch.setAttribute("height", "10");
+    const swatchLine = document.createElementNS(STATS_SVG_NS, "line");
+    swatchLine.setAttribute("x1", "0"); swatchLine.setAttribute("x2", "16");
+    swatchLine.setAttribute("y1", "5"); swatchLine.setAttribute("y2", "5");
+    swatchLine.setAttribute("stroke", s.color);
+    swatchLine.setAttribute("stroke-width", "2");
+    swatchLine.setAttribute("stroke-linecap", "round");
+    swatch.appendChild(swatchLine);
+
+    const label = document.createElement("span");
+    label.textContent = `${s.name} (${s.total})`;
+
+    btn.appendChild(swatch);
+    btn.appendChild(label);
+    btn.addEventListener("click", () => {
+      const hidden = statsChartState.hidden;
+      if (hidden.has(s.name)) hidden.delete(s.name); else hidden.add(s.name);
+      const isHidden = hidden.has(s.name);
+      btn.classList.toggle("is-dimmed", isHidden);
+      btn.setAttribute("aria-pressed", String(!isHidden));
+      s._pathEl.classList.toggle("is-dimmed", isHidden);
+      s._dotEl.classList.toggle("is-dimmed", isHidden);
+    });
+
+    box.appendChild(btn);
+  }
+}
+
+// Vollstaendige Tages-fuer-Tages-Tabelle - das barrierefreie Gegenstueck zum Chart, unabhaengig
+// vom Hover/Tastatur-Zugriff auf die Kurve erreichbar. Zeigt alle Konten, nicht die auf
+// STATS_MAX_SLOTS zusammengefaltete Chart-Serie.
+function renderStatsTable(days, accounts, series) {
+  const box = el("stats-table-wrap");
+  box.innerHTML = "";
+  const table = document.createElement("table");
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  const dateHeader = document.createElement("th");
+  dateHeader.textContent = "Datum";
+  headRow.appendChild(dateHeader);
+  for (const name of accounts) {
+    const th = document.createElement("th");
+    th.textContent = name;
+    headRow.appendChild(th);
+  }
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  for (let i = 0; i < days.length; i++) {
+    const tr = document.createElement("tr");
+    const dateCell = document.createElement("td");
+    dateCell.textContent = days[i];
+    tr.appendChild(dateCell);
+    for (const name of accounts) {
+      const td = document.createElement("td");
+      td.textContent = String(series[name][i]);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  box.appendChild(table);
+}
+
+function renderStatsTotals(accounts, totals, deletedTotals) {
+  const tbody = el("stats-totals-body");
+  tbody.innerHTML = "";
+  const sorted = [...accounts].sort((a, b) => (totals[b] || 0) - (totals[a] || 0));
+  for (const name of sorted) {
+    const tr = document.createElement("tr");
+    const nameTd = document.createElement("td"); nameTd.textContent = name;
+    const totalTd = document.createElement("td"); totalTd.textContent = String(totals[name] || 0);
+    const delTd = document.createElement("td"); delTd.textContent = String(deletedTotals[name] || 0);
+    tr.appendChild(nameTd); tr.appendChild(totalTd); tr.appendChild(delTd);
+    tbody.appendChild(tr);
+  }
+}
+
+async function loadStats() {
+  const btn = el("btn-load-stats");
+  btn.disabled = true;
+  try {
+    const days = Number(el("stats-range").value);
+    const res = await api(`/api/stats/daily?days=${days}`);
+    renderStatsTotals(res.accounts, res.totals, res.deleted_totals);
+
+    const empty = el("stats-empty");
+    const chartWrap = el("stats-chart-wrap");
+    const toggleBtn = el("btn-toggle-stats-table");
+
+    if (!res.accounts.length) {
+      empty.style.display = "";
+      chartWrap.style.display = "none";
+      toggleBtn.style.display = "none";
+      el("stats-table-wrap").style.display = "none";
+      statsChartState = null;
+      return;
+    }
+
+    empty.style.display = "none";
+    chartWrap.style.display = "";
+    toggleBtn.style.display = "";
+
+    statsChartState = { hidden: new Set() };
+    const seriesList = buildStatsSeries(res.days, res.accounts, res.series, res.totals);
+    renderStatsChart(res.days, seriesList);
+    renderStatsLegend(seriesList);
+    renderStatsTable(res.days, res.accounts, res.series);
+
+    statsShowTable = false;
+    el("stats-table-wrap").style.display = "none";
+    toggleBtn.textContent = "Als Tabelle anzeigen";
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+el("btn-load-stats").addEventListener("click", loadStats);
+el("stats-range").addEventListener("change", loadStats);
+el("btn-toggle-stats-table").addEventListener("click", () => {
+  statsShowTable = !statsShowTable;
+  el("stats-chart-wrap").style.display = statsShowTable ? "none" : "";
+  el("stats-table-wrap").style.display = statsShowTable ? "" : "none";
+  el("btn-toggle-stats-table").textContent = statsShowTable ? "Als Chart anzeigen" : "Als Tabelle anzeigen";
+});
+
 api("/api/version")
   .then((res) => { el("app-version").textContent = `Version: ${res.version}`; })
   .catch(() => { /* Versionsanzeige ist rein informativ, kein Fehler-Toast noetig */ });

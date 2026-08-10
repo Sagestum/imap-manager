@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import imapsync_gen  # noqa: E402
+import stats_store  # noqa: E402
 
 
 def write_passfile(directory, name, password):
@@ -23,7 +24,7 @@ def write_passfile(directory, name, password):
     return path
 
 
-def run_mapping(mapping, passfile_dir, cache_dir):
+def run_mapping(mapping, passfile_dir, cache_dir, db_path):
     acc = mapping["source_account"]
     act = mapping["dest_action"]
     label = f'{acc["name"]}::{mapping["source_folder"]} -> {act["name"]}::{mapping["dest_folder"]}'
@@ -38,8 +39,23 @@ def run_mapping(mapping, passfile_dir, cache_dir):
             cache_dir,
         )
         print(f"--- {label} ---", flush=True)
-        result = subprocess.run(["imapsync", *args])
-        if result.returncode != 0:
+        # Popen statt subprocess.run: die Ausgabe muss weiterhin live in "docker logs" landen
+        # (deshalb Zeile fuer Zeile durchreichen), gleichzeitig aber fuer die Statistik-Auswertung
+        # gesammelt werden.
+        proc = subprocess.Popen(
+            ["imapsync", *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        )
+        captured = []
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            captured.append(line)
+        proc.wait()
+
+        stats = stats_store.parse_imapsync_output("".join(captured), proc.returncode)
+        stats_store.record_run(mapping, stats, db_path)
+
+        if proc.returncode != 0:
             print(f'  Fehler bei "{label}" (siehe Ausgabe oben).', flush=True)
             return False
         return True
@@ -65,12 +81,13 @@ def main():
 
     cache_dir = plan_path.parent / "imapsync_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
+    db_path = plan_path.parent / stats_store.DB_FILENAME
 
     passfile_dir = Path(tempfile.mkdtemp(prefix="imapsync-auth-"))
     os.chmod(passfile_dir, 0o700)
     try:
         for mapping in plan:
-            run_mapping(mapping, passfile_dir, cache_dir)
+            run_mapping(mapping, passfile_dir, cache_dir, db_path)
     finally:
         shutil.rmtree(passfile_dir, ignore_errors=True)
 

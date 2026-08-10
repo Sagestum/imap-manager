@@ -10,6 +10,17 @@
   --danger-hover: #ff7a7a;
   --ok: #3ecf8e;
   --warn: #e6b800;
+  /* Kategorial-Palette fuers Statistik-Chart: feste Reihenfolge, validiert gegen --card-bg als
+     Chart-Oberflaeche (siehe dataviz-Skill: node validate_palette.js --mode dark --surface
+     "#171a21" - alle sechs Checks bestehen, schlechtestes CVD-Paar delta-E 8.4). */
+  --series-1: #3987e5; /* blau */
+  --series-2: #d95926; /* orange */
+  --series-3: #199e70; /* aqua */
+  --series-4: #c98500; /* gelb */
+  --series-5: #d55181; /* magenta */
+  --series-6: #008300; /* gruen */
+  --series-7: #9085e9; /* violett */
+  --series-8: #e66767; /* rot */
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -209,6 +220,84 @@ pre#preview {
   padding: 0.4rem 0.6rem;
   border-radius: 6px;
   font-size: 0.85rem;
+}
+
+/* ---------- Statistik-Chart ---------- */
+
+#stats-chart-wrap { position: relative; }
+
+#stats-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: inherit;
+}
+#stats-chart text {
+  fill: var(--text-dim);
+  font-size: 11px;
+}
+#stats-chart .stats-gridline { stroke: var(--border); stroke-width: 1; }
+#stats-chart .stats-axis { stroke: var(--border); stroke-width: 1; }
+#stats-chart .stats-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#stats-chart .stats-line.is-dimmed { opacity: 0.18; }
+#stats-chart .stats-end-dot { stroke: var(--card-bg); stroke-width: 2; }
+#stats-chart .stats-end-dot.is-dimmed { opacity: 0.18; }
+#stats-chart .stats-crosshair-line { stroke: var(--text-dim); stroke-width: 1; opacity: 0; pointer-events: none; }
+#stats-chart .stats-crosshair-dot { stroke: var(--card-bg); stroke-width: 2; opacity: 0; pointer-events: none; }
+#stats-chart .stats-hit-area { fill: transparent; cursor: crosshair; }
+#stats-chart .stats-hit-area:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
+.stats-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.9rem;
+  margin: 0.6rem 0 0.9rem;
+}
+.stats-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  padding: 0.1rem 0.2rem;
+  cursor: pointer;
+}
+.stats-legend-item:hover { color: var(--text); }
+.stats-legend-item.is-dimmed { opacity: 0.45; }
+.stats-legend-item svg { flex-shrink: 0; }
+
+.stats-tooltip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.82rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+  min-width: 150px;
+  opacity: 0;
+  transform: translate(-9999px, -9999px);
+  transition: opacity 0.08s ease;
+  z-index: 10;
+}
+.stats-tooltip.is-visible { opacity: 1; }
+.stats-tooltip .stats-tooltip-date { color: var(--text-dim); margin-bottom: 0.3rem; }
+.stats-tooltip-row { display: flex; align-items: center; gap: 0.4rem; justify-content: space-between; }
+.stats-tooltip-row + .stats-tooltip-row { margin-top: 0.15rem; }
+.stats-tooltip-key { display: inline-block; width: 12px; height: 2px; flex-shrink: 0; }
+.stats-tooltip-name { color: var(--text-dim); margin-right: auto; }
+.stats-tooltip-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+#stats-table-wrap table td, #stats-table-wrap table th {
+  font-variant-numeric: tabular-nums;
+}
+#stats-totals-body td:nth-child(2), #stats-totals-body td:nth-child(3) {
+  font-variant-numeric: tabular-nums;
 }
 
 #toast {

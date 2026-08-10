@@ -7,6 +7,7 @@ import re
 import socket
 import stat
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, request, render_template, send_file, abort
@@ -14,6 +15,7 @@ from werkzeug.exceptions import HTTPException
 import io
 
 from imapsync_gen import preview_lines, resolve_mappings, validate_config
+import stats_store
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -642,6 +644,46 @@ def download():
 
 RUN_CONFIG_DIR = Path(os.environ.get("FDM_CONFIG_DIR", str(BASE_DIR / "config")))
 RUN_TRIGGER_FILE = RUN_CONFIG_DIR / ".run_now"
+STATS_DB_PATH = RUN_CONFIG_DIR / stats_store.DB_FILENAME
+
+
+@app.route("/api/stats/daily", methods=["GET"])
+def stats_daily():
+    """Taeglich aggregierte Nachrichten-Zahlen aus dem Runner (siehe stats_store.py), gruppiert
+    pro Quell-Konto. Ueberlebt das Loeschen eines Kontos aus der Konfiguration, da nach dessen
+    Namen (nicht seiner ID) geschluesselt wird."""
+    try:
+        days = int(request.args.get("days", 30))
+    except (TypeError, ValueError):
+        abort(400, description="days muss eine Zahl sein.")
+    days = max(1, min(days, 730))
+
+    rows = stats_store.query_daily_by_account(days, STATS_DB_PATH)
+
+    today = datetime.now(timezone.utc).date()
+    day_list = [(today - timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
+    day_index = {d: i for i, d in enumerate(day_list)}
+
+    accounts = sorted({r["source_account"] for r in rows})
+    series = {name: [0] * len(day_list) for name in accounts}
+    totals = {name: 0 for name in accounts}
+    deleted_totals = {name: 0 for name in accounts}
+    for r in rows:
+        idx = day_index.get(r["date"])
+        if idx is None:
+            continue
+        name = r["source_account"]
+        series[name][idx] += r["messages_transferred"]
+        totals[name] += r["messages_transferred"]
+        deleted_totals[name] += r["messages_deleted"]
+
+    return jsonify({
+        "days": day_list,
+        "accounts": accounts,
+        "series": series,
+        "totals": totals,
+        "deleted_totals": deleted_totals,
+    })
 
 
 def _serialize_mapping(mapping):

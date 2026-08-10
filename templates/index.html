@@ -146,6 +146,39 @@
     <div id="history-results"></div>
   </section>
 
+  <!-- STATISTIK -->
+  <section class="card">
+    <h2>Statistik</h2>
+    <p class="hint">
+      Taeglich aus den imapsync-Laeufen aufsummierte Nachrichtenzahlen je Quell-Konto - dauerhaft
+      gespeichert, bleibt auch nach dem Loeschen eines Kontos erhalten. Damit laesst sich pruefen,
+      ob ein Postfach noch nennenswerten Verkehr hat.
+    </p>
+    <div class="form-actions">
+      <label for="stats-range">Zeitraum</label>
+      <select id="stats-range">
+        <option value="30" selected>Letzte 30 Tage</option>
+        <option value="90">Letzte 90 Tage</option>
+        <option value="365">Letztes Jahr</option>
+      </select>
+      <button id="btn-load-stats" type="button">Statistik laden</button>
+      <button id="btn-toggle-stats-table" type="button" class="secondary" style="display:none;">Als Tabelle anzeigen</button>
+    </div>
+    <div id="stats-empty" class="hint" style="display:none;">Noch keine Statistik-Daten vorhanden.</div>
+    <div id="stats-chart-wrap">
+      <div id="stats-chart"></div>
+      <div id="stats-tooltip" class="stats-tooltip" role="status" aria-live="polite"></div>
+      <div id="stats-legend" class="stats-legend"></div>
+    </div>
+    <div id="stats-table-wrap" style="display:none;"></div>
+    <table id="stats-totals-table">
+      <thead>
+        <tr><th>Konto</th><th>Nachrichten gesamt</th><th>davon aus Quelle geloescht</th></tr>
+      </thead>
+      <tbody id="stats-totals-body"></tbody>
+    </table>
+  </section>
+
   <!-- PREVIEW / EXPORT -->
   <section class="card">
     <h2>Vorschau &amp; Export</h2>

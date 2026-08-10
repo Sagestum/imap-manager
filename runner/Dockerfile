@@ -47,6 +47,7 @@ RUN apt-get update \
         "https://raw.githubusercontent.com/imapsync/imapsync/${IMAPSYNC_GIT_REF}/imapsync" \
     && chmod +x /usr/local/bin/imapsync \
     && imapsync --version \
+    && python3 -c 'import sqlite3' \
     && rm -rf /var/lib/apt/lists/*
 # --version statt --tests: die eingebaute Testsuite prueft u.a. Live-IPv6-Konnektivitaet zu
 # test1ipv6.lamiral.info und den oeffentlichen Release-Stand - beides im isolierten Docker-Build
@@ -54,6 +55,7 @@ RUN apt-get update \
 # Perl-Module per "use" und deckt damit fehlende CPAN-Abhaengigkeiten weiterhin auf.
 
 COPY imapsync_gen.py /app/imapsync_gen.py
+COPY stats_store.py /app/stats_store.py
 COPY runner/run_sync.py /app/run_sync.py
 COPY runner/entrypoint.sh /entrypoint.sh
 COPY VERSION /VERSION
