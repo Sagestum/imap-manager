@@ -4,8 +4,8 @@ services:
     image: imap-manager:latest
     container_name: imap-manager
     restart: unless-stopped
-    expose:
-      - "5000"
+    networks:
+      - httpd
     volumes:
       - imap_manager_data:/app/data
       - imap_manager_export:/app/export
@@ -14,14 +14,6 @@ services:
       - FDM_WEBUI_HOST=0.0.0.0
       - FDM_WEBUI_PORT=5000
       - FDM_CONFIG_DIR=/app/config
-      # nginx-proxy liest diese Variablen per Docker-Socket aus und baut daraus die vhost-Config
-      - VIRTUAL_HOST=${VIRTUAL_HOST:-imap-manager.example.com}
-      - VIRTUAL_PORT=5000
-      # nur relevant, falls acme-companion (LetsEncrypt) neben nginx-proxy laeuft
-      - LETSENCRYPT_HOST=${LETSENCRYPT_HOST:-imap-manager.example.com}
-      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
-    networks:
-      - proxy
 
   fdm-runner:
     build:
@@ -39,12 +31,23 @@ services:
       # wie oft (Sekunden) auf die .run_now-Trigger-Datei geprueft wird
       - "TRIGGER_POLL_INTERVAL=${FDM_TRIGGER_POLL_INTERVAL:-5}"
 
+# "httpd" ist das Docker-Netzwerk von nginxmanager (jc21/nginx-proxy-manager) auf dem Docker-Host
+# "eden" - der Proxy-Host in nginxmanager zeigt auf http://imap-manager:5000, Docker-DNS loest den
+# Container-Namen innerhalb dieses Netzwerks auf. Kein VIRTUAL_HOST/LETSENCRYPT_HOST-Mechanismus
+# (das waere jwilder/nginx-proxy, laeuft auf eden nicht) und kein Host-Port noetig.
 networks:
-  proxy:
-    name: ${PROXY_NETWORK:-nginx-proxy}
+  httpd:
     external: true
 
+# Extern verwaltete Volumes (frueher per Portainer-Stack "imap" angelegt, daher der Praefix) -
+# ueberleben einen Stack-Neuaufbau, enthalten die echten Konten/Passwoerter/Statistiken.
 volumes:
   imap_manager_data:
+    external: true
+    name: imap_imap_manager_data
   imap_manager_export:
+    external: true
+    name: imap_imap_manager_export
   imap_manager_config:
+    external: true
+    name: imap_imap_manager_config
