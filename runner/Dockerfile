@@ -56,6 +56,7 @@ RUN apt-get update \
 
 COPY imapsync_gen.py /app/imapsync_gen.py
 COPY stats_store.py /app/stats_store.py
+COPY mail_filter.py /app/mail_filter.py
 COPY runner/run_sync.py /app/run_sync.py
 COPY runner/entrypoint.sh /entrypoint.sh
 COPY VERSION /VERSION

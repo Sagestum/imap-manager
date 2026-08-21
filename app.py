@@ -42,7 +42,7 @@ def handle_http_exception(exc):
     response.content_type = "application/json"
     return response
 
-_LOCK_FREE_DEFAULT = {"accounts": [], "actions": [], "rules": []}
+_LOCK_FREE_DEFAULT = {"accounts": [], "actions": [], "rules": [], "filters": []}
 
 
 def migrate_config(data):
@@ -86,6 +86,7 @@ def load_config():
     data.setdefault("accounts", [])
     data.setdefault("actions", [])
     data.setdefault("rules", [])
+    data.setdefault("filters", [])
     return migrate_config(data)
 
 
@@ -108,6 +109,7 @@ def new_id():
 ACCOUNT_TYPES = {"pop3", "pop3s", "imap", "imaps"}
 ACTION_TYPES = {"imap", "imaps"}
 FIELD_TYPES = {"source", "all"}
+FILTER_HEADERS = {"from", "subject"}
 
 
 def require_fields(payload, fields):
@@ -309,8 +311,9 @@ def update_action(action_id):
 def delete_action(action_id):
     config = load_config()
     in_use = any(r.get("dest_action_id") == action_id for r in config["rules"])
+    in_use = in_use or any(f.get("dest_action_id") == action_id for f in config["filters"])
     if in_use:
-        abort(400, description="Ziel-Server wird noch von mindestens einer Regel verwendet.")
+        abort(400, description="Ziel-Server wird noch von mindestens einer Regel oder einem Filter verwendet.")
     before = len(config["actions"])
     config["actions"] = [a for a in config["actions"] if a["id"] != action_id]
     if len(config["actions"]) == before:
@@ -617,6 +620,84 @@ def delete_rule(rule_id):
     return "", 204
 
 
+# ---------- Filter (Post-Sync-Absender/Betreff-Regeln) ----------
+#
+# Getrennt von den Ordner-Zuordnungen (rules): imapsync selbst kennt kein Content-Routing, daher
+# laeuft dieser Schritt erst NACH dem Sync auf dem Zielordner (siehe mail_filter.py im Runner).
+# watch_folder/target_folder werden bewusst gegen dest_action.dest_folders validiert - dieselbe
+# Liste, die auch die Ordner-Zuordnungen benutzen, keine neue Ordner-Lade-Logik noetig.
+
+def resolve_filter_folders(payload, dest_action):
+    watch_folder = str(payload.get("watch_folder", "")).strip()
+    target_folder = str(payload.get("target_folder", "")).strip()
+    dest_folders = dest_action.get("dest_folders") or []
+    if watch_folder not in dest_folders:
+        abort(400, description="Der beobachtete Ordner ist bei diesem Ziel-Server nicht konfiguriert.")
+    if target_folder not in dest_folders:
+        abort(400, description="Der Ziel-Ordner ist bei diesem Ziel-Server nicht konfiguriert.")
+    if watch_folder == target_folder:
+        abort(400, description="Beobachteter Ordner und Ziel-Ordner duerfen nicht identisch sein.")
+    return watch_folder, target_folder
+
+
+def build_filter(payload, config, filter_id=None):
+    header = payload.get("header")
+    if header not in FILTER_HEADERS:
+        abort(400, description="Ungueltiges Filter-Feld (from/subject).")
+    match = str(payload.get("match", "")).strip()
+    if not match:
+        abort(400, description="Muster darf nicht leer sein.")
+
+    dest_action_id = payload.get("dest_action_id")
+    dest_action = next((a for a in config["actions"] if a["id"] == dest_action_id), None)
+    if not dest_action:
+        abort(400, description="Unbekannter Ziel-Server.")
+    watch_folder, target_folder = resolve_filter_folders(payload, dest_action)
+
+    return {
+        "id": filter_id or new_id(),
+        "dest_action_id": dest_action_id,
+        "watch_folder": watch_folder,
+        "header": header,
+        "match": match,
+        "target_folder": target_folder,
+    }
+
+
+@app.route("/api/filters", methods=["POST"])
+def create_filter():
+    payload = request.get_json(force=True) or {}
+    config = load_config()
+    filter_ = build_filter(payload, config)
+    config["filters"].append(filter_)
+    save_config(config)
+    return jsonify(filter_), 201
+
+
+@app.route("/api/filters/<filter_id>", methods=["PUT"])
+def update_filter(filter_id):
+    payload = request.get_json(force=True) or {}
+    config = load_config()
+    if not any(f["id"] == filter_id for f in config["filters"]):
+        abort(404, description="Filter nicht gefunden.")
+    new_filter = build_filter(payload, config, filter_id=filter_id)
+    idx = next(i for i, f in enumerate(config["filters"]) if f["id"] == filter_id)
+    config["filters"][idx] = new_filter
+    save_config(config)
+    return jsonify(new_filter)
+
+
+@app.route("/api/filters/<filter_id>", methods=["DELETE"])
+def delete_filter(filter_id):
+    config = load_config()
+    before = len(config["filters"])
+    config["filters"] = [f for f in config["filters"] if f["id"] != filter_id]
+    if len(config["filters"]) == before:
+        abort(404, description="Filter nicht gefunden.")
+    save_config(config)
+    return "", 204
+
+
 # ---------- Vorschau / Export ----------
 
 @app.route("/api/preview", methods=["GET"])
@@ -702,26 +783,55 @@ def _serialize_mapping(mapping):
     }
 
 
+def _serialize_filter(filter_, actions_by_id):
+    act = actions_by_id.get(filter_["dest_action_id"])
+    if not act:
+        return None
+    return {
+        "dest_action": {
+            "name": act["name"], "type": act["type"], "server": act["server"],
+            "port": act["port"], "user": act["user"], "pass": act["pass"],
+        },
+        "watch_folder": filter_["watch_folder"],
+        "header": filter_["header"],
+        "match": filter_["match"],
+        "target_folder": filter_["target_folder"],
+    }
+
+
 @app.route("/api/run-now", methods=["POST"])
 def run_now():
-    """Schreibt die aufgeloesten Ordner-Zuordnungen als sync_plan.json ins geteilte Volume und
-    legt eine Trigger-Datei an, die der fdm-runner-Container abfragt (siehe docker-compose.yml).
+    """Schreibt die aufgeloesten Ordner-Zuordnungen als sync_plan.json und die Filter als
+    filter_plan.json ins geteilte Volume und legt eine Trigger-Datei an, die der
+    fdm-runner-Container abfragt (siehe docker-compose.yml).
     """
     config = load_config()
+    actions_by_id = {a["id"]: a for a in config["actions"]}
+
     mappings = resolve_mappings(config)
     plan = [_serialize_mapping(m) for m in mappings]
     dest = RUN_CONFIG_DIR / "sync_plan.json"
+
+    filter_plan = [
+        f for f in (_serialize_filter(flt, actions_by_id) for flt in config["filters"]) if f
+    ]
+    filter_dest = RUN_CONFIG_DIR / "filter_plan.json"
 
     try:
         RUN_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(dest, "w", encoding="utf-8") as f:
             json.dump(plan, f, indent=2, ensure_ascii=False)
         os.chmod(dest, stat.S_IRUSR | stat.S_IWUSR)  # 600, enthaelt Klartext-Passwoerter
+        with open(filter_dest, "w", encoding="utf-8") as f:
+            json.dump(filter_plan, f, indent=2, ensure_ascii=False)
+        os.chmod(filter_dest, stat.S_IRUSR | stat.S_IWUSR)  # 600, enthaelt Klartext-Passwoerter
         RUN_TRIGGER_FILE.touch()
     except OSError as exc:
         abort(500, description=f"Fehler beim Speichern/Ausloesen: {exc}")
 
-    return jsonify({"saved_to": str(dest), "triggered": True, "mappings": len(plan)})
+    return jsonify({
+        "saved_to": str(dest), "triggered": True, "mappings": len(plan), "filters": len(filter_plan),
+    })
 
 
 if __name__ == "__main__":

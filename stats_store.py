@@ -27,6 +27,14 @@ CREATE TABLE IF NOT EXISTS sync_stats (
     runs INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (date, source_account, source_folder, dest_action, dest_folder)
 );
+
+CREATE TABLE IF NOT EXISTS filter_state (
+    dest_action TEXT NOT NULL,
+    watch_folder TEXT NOT NULL,
+    uidvalidity INTEGER NOT NULL,
+    last_uid INTEGER NOT NULL,
+    PRIMARY KEY (dest_action, watch_folder)
+);
 """
 
 # Auf den jeweiligen Label-Text verankert, damit z.B. "Messages transferred" nicht mit
@@ -47,7 +55,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA busy_timeout=5000")
-    conn.execute(SCHEMA)
+    conn.executescript(SCHEMA)  # SCHEMA enthaelt mehrere Statements, execute() erlaubt nur eins
     return conn
 
 
@@ -100,6 +108,39 @@ def record_run(mapping, stats, db_path: Path):
                 stats["bytes_transferred"],
                 stats["errors"],
             ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_filter_state(dest_action: str, watch_folder: str, db_path: Path):
+    """Liefert (uidvalidity, last_uid) fuer den High-Water-Mark eines Filter-Ordners, oder
+    (None, 0), falls dieser Ordner noch nie verarbeitet wurde."""
+    conn = _connect(db_path)
+    try:
+        cur = conn.execute(
+            "SELECT uidvalidity, last_uid FROM filter_state WHERE dest_action = ? AND watch_folder = ?",
+            (dest_action, watch_folder),
+        )
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else (None, 0)
+    finally:
+        conn.close()
+
+
+def set_filter_state(dest_action: str, watch_folder: str, uidvalidity: int, last_uid: int, db_path: Path):
+    conn = _connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO filter_state (dest_action, watch_folder, uidvalidity, last_uid)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (dest_action, watch_folder) DO UPDATE SET
+                uidvalidity = excluded.uidvalidity,
+                last_uid    = excluded.last_uid
+            """,
+            (dest_action, watch_folder, uidvalidity, last_uid),
         )
         conn.commit()
     finally:

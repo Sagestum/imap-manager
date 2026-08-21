@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import imapsync_gen  # noqa: E402
+import mail_filter  # noqa: E402
 import stats_store  # noqa: E402
 
 
@@ -72,24 +73,33 @@ def main():
     plan_path = Path(sys.argv[1])
     if not plan_path.exists():
         print(f"Kein sync_plan.json unter {plan_path} gefunden, ueberspringe Lauf.", flush=True)
-        return 0
-
-    plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    if not plan:
-        print("Keine Ordner-Zuordnungen in sync_plan.json gefunden.", flush=True)
-        return 0
+        plan = []
+    else:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if not plan:
+            print("Keine Ordner-Zuordnungen in sync_plan.json gefunden.", flush=True)
 
     cache_dir = plan_path.parent / "imapsync_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     db_path = plan_path.parent / stats_store.DB_FILENAME
 
-    passfile_dir = Path(tempfile.mkdtemp(prefix="imapsync-auth-"))
-    os.chmod(passfile_dir, 0o700)
-    try:
-        for mapping in plan:
-            run_mapping(mapping, passfile_dir, cache_dir, db_path)
-    finally:
-        shutil.rmtree(passfile_dir, ignore_errors=True)
+    if plan:
+        passfile_dir = Path(tempfile.mkdtemp(prefix="imapsync-auth-"))
+        os.chmod(passfile_dir, 0o700)
+        try:
+            for mapping in plan:
+                run_mapping(mapping, passfile_dir, cache_dir, db_path)
+        finally:
+            shutil.rmtree(passfile_dir, ignore_errors=True)
+
+    # Filter laufen unabhaengig davon, ob es in diesem Zyklus Ordner-Zuordnungen gab - beide
+    # Plaene werden von run-now() immer gemeinsam geschrieben, koennen aber leer sein.
+    filter_plan_path = plan_path.parent / "filter_plan.json"
+    if filter_plan_path.exists():
+        filters = json.loads(filter_plan_path.read_text(encoding="utf-8"))
+        if filters:
+            print("--- Post-Sync-Filter ---", flush=True)
+            mail_filter.run_filters(filters, db_path)
 
     return 0
 

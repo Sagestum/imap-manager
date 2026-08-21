@@ -133,6 +133,40 @@
     </form>
   </section>
 
+  <!-- FILTER -->
+  <section class="card">
+    <h2><span class="step-badge">3</span> Filter <span class="hint-inline">Post-Sync</span></h2>
+    <p class="hint">Laeuft nach dem Sync auf dem Zielordner: durchsucht ihn per IMAP nach Absender-/Betreff-Mustern und verschiebt Treffer in einen anderen Ordner desselben Ziel-Servers. Kein Ersatz fuer Ordner-Zuordnungen, sondern ein zusaetzlicher Schritt danach.</p>
+    <table id="filters-table">
+      <thead>
+        <tr><th>Ziel-Server / beobachteter Ordner</th><th>Bedingung</th><th></th><th>Ziel-Ordner</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <form id="filter-form" class="entity-form">
+      <input type="hidden" name="id">
+      <select name="dest_action_id" required>
+        <option value="">Ziel-Server waehlen ...</option>
+      </select>
+      <select name="watch_folder" required>
+        <option value="">Beobachteter Ordner ...</option>
+      </select>
+      <select name="header" required>
+        <option value="from">Absender (From)</option>
+        <option value="subject">Betreff (Subject)</option>
+      </select>
+      <input type="text" name="match" placeholder="Muster (z.B. newsletter@bla.de)" required>
+      <span class="arrow">&rarr;</span>
+      <select name="target_folder" required>
+        <option value="">Ziel-Ordner ...</option>
+      </select>
+      <div class="form-actions">
+        <button type="submit">Filter speichern</button>
+        <button type="button" class="secondary" data-cancel="filter">Abbrechen</button>
+      </div>
+    </form>
+  </section>
+
   <!-- VERLAUF -->
   <section class="card">
     <h2>Verlauf</h2>

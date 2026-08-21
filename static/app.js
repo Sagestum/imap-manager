@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { accounts: [], actions: [], rules: [] };
+const state = { accounts: [], actions: [], rules: [], filters: [] };
 let currentSourceFolders = [];
 let currentDestFolders = [];
 
@@ -9,6 +9,7 @@ const accountForm = el("account-form");
 const actionForm = el("action-form");
 const mappingForm = el("mapping-form");
 const catchallForm = el("catchall-form");
+const filterForm = el("filter-form");
 
 // ---------- Helpers ----------
 
@@ -119,6 +120,10 @@ function resetForm(form, name) {
     resetDependentFolderSelect(mappingForm.querySelector('[name="source_folder"]'));
     resetDependentFolderSelect(mappingForm.querySelector('[name="dest_folder"]'));
   }
+  if (name === "filter") {
+    resetDependentFolderSelect(filterForm.querySelector('[name="watch_folder"]'));
+    resetDependentFolderSelect(filterForm.querySelector('[name="target_folder"]'));
+  }
 }
 
 // ---------- Load & render ----------
@@ -128,10 +133,12 @@ async function loadAll() {
   state.accounts = config.accounts;
   state.actions = config.actions;
   state.rules = config.rules;
+  state.filters = config.filters;
   renderAccounts();
   renderActions();
   renderMappings();
   renderCatchall();
+  renderFilters();
   refreshPreview();
 }
 
@@ -551,12 +558,88 @@ function renderCatchall() {
   }
 }
 
+// ---------- Filter (Post-Sync) ----------
+
+filterForm.querySelector('[name="dest_action_id"]').addEventListener("change", (e) => {
+  updateDependentFolderSelect(
+    e.target, filterForm.querySelector('[name="watch_folder"]'),
+    actionsWithFolders, (a) => a.dest_folders,
+  );
+  updateDependentFolderSelect(
+    e.target, filterForm.querySelector('[name="target_folder"]'),
+    actionsWithFolders, (a) => a.dest_folders,
+  );
+});
+
+filterForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const data = formToObject(filterForm);
+  const id = data.id;
+  try {
+    if (id) {
+      await api(`/api/filters/${id}`, { method: "PUT", body: JSON.stringify(data) });
+      toast("Filter aktualisiert.", "success");
+    } else {
+      await api("/api/filters", { method: "POST", body: JSON.stringify(data) });
+      toast("Filter angelegt.", "success");
+    }
+    resetForm(filterForm, "filter");
+    await loadAll();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+});
+
+function renderFilters() {
+  const tbody = document.querySelector("#filters-table tbody");
+  tbody.innerHTML = "";
+  for (const flt of state.filters) {
+    const destAction = state.actions.find((a) => a.id === flt.dest_action_id);
+    const headerLabel = flt.header === "subject" ? "Betreff" : "Absender";
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${destAction ? escapeHtml(destAction.name) : "?"} / ${escapeHtml(flt.watch_folder || "?")}</td>
+      <td>${headerLabel} enthaelt &quot;${escapeHtml(flt.match || "")}&quot;</td>
+      <td class="arrow">&rarr;</td>
+      <td>${escapeHtml(flt.target_folder || "?")}</td>
+      <td></td>`;
+    const actionsTd = tr.querySelector("td:last-child");
+    actionsTd.appendChild(makeButton("Bearbeiten", () => editFilter(flt)));
+    actionsTd.appendChild(makeButton("Loeschen", () => deleteFilter(flt), true));
+    tbody.appendChild(tr);
+  }
+}
+
+function editFilter(flt) {
+  filterForm.querySelector('[name="id"]').value = flt.id;
+  const destSelect = filterForm.querySelector('[name="dest_action_id"]');
+  destSelect.value = flt.dest_action_id;
+  updateDependentFolderSelect(destSelect, filterForm.querySelector('[name="watch_folder"]'), actionsWithFolders, (a) => a.dest_folders);
+  filterForm.querySelector('[name="watch_folder"]').value = flt.watch_folder || "";
+  updateDependentFolderSelect(destSelect, filterForm.querySelector('[name="target_folder"]'), actionsWithFolders, (a) => a.dest_folders);
+  filterForm.querySelector('[name="target_folder"]').value = flt.target_folder || "";
+  filterForm.querySelector('[name="header"]').value = flt.header;
+  filterForm.querySelector('[name="match"]').value = flt.match;
+  filterForm.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function deleteFilter(flt) {
+  if (!confirm("Wirklich loeschen?")) return;
+  try {
+    await api(`/api/filters/${flt.id}`, { method: "DELETE" });
+    toast("Geloescht.", "success");
+    await loadAll();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
 // ---------- Cancel-Buttons ----------
 
 document.querySelectorAll("[data-cancel]").forEach((btn) => {
   btn.addEventListener("click", () => {
     const name = btn.dataset.cancel;
-    const forms = { account: accountForm, action: actionForm, mapping: mappingForm };
+    const forms = { account: accountForm, action: actionForm, mapping: mappingForm, filter: filterForm };
     resetForm(forms[name], name);
   });
 });
