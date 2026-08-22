@@ -198,6 +198,17 @@ function renderActions() {
       actionsWithFolders, (a) => a.dest_folders,
     );
   }
+
+  const filterDestSelect = filterForm.querySelector('[name="dest_action_id"]');
+  populateSelect(filterDestSelect, actionsWithFolders(), "Ziel-Server waehlen ...");
+  updateDependentFolderSelect(
+    filterDestSelect, filterForm.querySelector('[name="watch_folder"]'),
+    actionsWithFolders, (a) => a.dest_folders,
+  );
+  updateDependentFolderSelect(
+    filterDestSelect, filterForm.querySelector('[name="target_folder"]'),
+    actionsWithFolders, (a) => a.dest_folders,
+  );
 }
 
 // ---------- Quell-Konten CRUD ----------
