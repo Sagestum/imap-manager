@@ -14,6 +14,9 @@ services:
       - FDM_WEBUI_HOST=0.0.0.0
       - FDM_WEBUI_PORT=5000
       - FDM_CONFIG_DIR=/app/config
+      # Fernet-Schluessel zum Ver-/Entschluesseln der Passwoerter in config.json, aus .env neben
+      # dieser docker-compose.yml (nicht im Git-Repo) - siehe README.md
+      - "FDM_SECRET_KEY=${FDM_SECRET_KEY}"
 
   fdm-runner:
     build:

@@ -13,6 +13,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request, render_template, abort
 from werkzeug.exceptions import HTTPException
 
+import crypto_utils
 from imapsync_gen import resolve_mappings
 import stats_store
 
@@ -86,14 +87,20 @@ def load_config():
     data.setdefault("actions", [])
     data.setdefault("rules", [])
     data.setdefault("filters", [])
-    return migrate_config(data)
+    data = migrate_config(data)
+    for entry in data["accounts"] + data["actions"]:
+        entry["pass"] = crypto_utils.decrypt_maybe(entry["pass"])
+    return data
 
 
 def save_config(config):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    to_write = json.loads(json.dumps(config))  # Deep Copy, Original bleibt Klartext im Speicher
+    for entry in to_write["accounts"] + to_write["actions"]:
+        entry["pass"] = crypto_utils.encrypt(entry["pass"])
     tmp_file = DATA_FILE.with_suffix(".json.tmp")
     with open(tmp_file, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+        json.dump(to_write, f, indent=2, ensure_ascii=False)
     tmp_file.replace(DATA_FILE)
     try:
         os.chmod(DATA_FILE, stat.S_IRUSR | stat.S_IWUSR)  # 600, enthaelt Passwoerter

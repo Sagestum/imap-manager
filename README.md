@@ -23,9 +23,8 @@ ein Satz `imapsync`-Aufrufe erzeugt und optional direkt ausgeführt.
   (Datum/Von/Betreff), um zu sehen, was tatsächlich zugestellt wurde.
 
 Die Anwendung baut daraus pro Ordner-Zuordnung einen `imapsync`-Aufruf (keine Text-Config, die ein
-externer Parser neu einliest - direkt eine Argument-Liste), die man sich als Vorschau anzeigen und
-herunterladen lassen kann, oder per "Speichern & Jetzt ausführen" direkt in einem zweiten Container
-ausführen lässt (siehe unten).
+externer Parser neu einliest - direkt eine Argument-Liste), der sich per "Speichern & Jetzt
+ausführen" direkt in einem zweiten Container ausführen lässt (siehe unten).
 
 ## Architektur: zwei Container
 
@@ -71,6 +70,7 @@ Relevante Umgebungsvariablen (als Stack-Env-Vars überschreibbar, siehe `docker-
 | `PROXY_NETWORK` | `nginx-proxy` | Name des externen Docker-Netzwerks |
 | `FDM_CRON_SCHEDULE` | `*/5 * * * *` | Cron-Zeitplan für automatische Sync-Läufe |
 | `FDM_TRIGGER_POLL_INTERVAL` | `5` | Sekunden zwischen Prüfungen auf `.run_now` |
+| `FDM_SECRET_KEY` | – (Pflicht) | Fernet-Schlüssel zum Ver-/Entschlüsseln der Passwörter in `config.json`, nur beim `imap-manager`-Service nötig - erzeugen mit `python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`, getrennt vom Config-Volume aufbewahren (z. B. `.env` neben der `docker-compose.yml`, nicht im Git-Repo) |
 
 (Die `FDM_`-Praefixe stammen noch vom fruehen `fdm`-basierten Aufbau und wurden bewusst nicht
 umbenannt, um bereits konfigurierte Stack-Env-Vars nicht zu invalidieren.)
@@ -81,11 +81,13 @@ betreiben; Standardmäßig bindet der Flask-Dev-Server (`python app.py` statt gu
 
 ## Wichtige Hinweise
 
-- **Passwörter liegen im Klartext** in `data/config.json` (Volume `imap_manager_data`) sowie in
-  `sync_plan.json` im geteilten Config-Volume - `imapsync` braucht sie so. Beide Dateien werden mit
-  `chmod 600` angelegt; die Volumes entsprechend absichern. Beim tatsächlichen `imapsync`-Aufruf
-  werden die Passwörter per `--passfile1`/`--passfile2` übergeben (temporäre Datei, sofort nach dem
-  Aufruf gelöscht), nicht als Klartext-Argument - so tauchen sie nicht in `ps aux` auf.
+- **Passwörter**: in `data/config.json` (Volume `imap_manager_data`) mit Fernet
+  (`FDM_SECRET_KEY`, siehe oben) verschlüsselt abgelegt. In `sync_plan.json`/`filter_plan.json` im
+  geteilten Config-Volume liegen sie dagegen im Klartext - `imapsync` und der Post-Sync-Filter
+  brauchen sie dort direkt verwertbar. Alle drei Dateien werden mit `chmod 600` angelegt; die
+  Volumes entsprechend absichern. Beim tatsächlichen `imapsync`-Aufruf werden die Passwörter per
+  `--passfile1`/`--passfile2` übergeben (temporäre Datei, sofort nach dem Aufruf gelöscht), nicht
+  als Klartext-Argument - so tauchen sie nicht in `ps aux` auf.
 - **Kein Outlook/Office365-OAuth2** aktuell unterstützt (Microsoft verlangt dafür eine eigene
   Azure-App-Registrierung plus Token-Refresh-Logik oder einen vorgeschalteten OAuth2-Proxy — bisher
   zurückgestellt).
@@ -102,8 +104,6 @@ betreiben; Standardmäßig bindet der Flask-Dev-Server (`python app.py` statt gu
 |---|---|
 | `GET /api/config` | gespeicherte Konfiguration |
 | `POST /api/imap/folders` (Alias `/api/test-and-fetch-folders`) | Verbindung testen + Ordner live abrufen |
-| `GET /api/preview` | geplante `imapsync`-Aufrufe + Validierungswarnungen |
-| `GET /api/download` | geplante `imapsync`-Aufrufe als Textdatei herunterladen |
 | `POST /api/run-now` | `sync_plan.json` ins geteilte Volume schreiben + `fdm-runner` sofort auslösen |
 | `GET /api/history` | zuletzt zugestellte Mails je Zielordner live per IMAP abfragen |
 | `GET /api/version` | aktuell laufende Version |
