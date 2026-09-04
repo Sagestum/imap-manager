@@ -139,7 +139,6 @@ async function loadAll() {
   renderMappings();
   renderCatchall();
   renderFilters();
-  refreshPreview();
 }
 
 function renderAccounts() {
@@ -655,30 +654,7 @@ document.querySelectorAll("[data-cancel]").forEach((btn) => {
   });
 });
 
-// ---------- Vorschau / Export ----------
-
-async function refreshPreview() {
-  try {
-    const { conf, warnings } = await api("/api/preview");
-    el("preview").textContent = conf;
-    const warningsBox = el("warnings");
-    warningsBox.innerHTML = "";
-    for (const w of warnings) {
-      const div = document.createElement("div");
-      div.className = "warning-item";
-      div.textContent = w;
-      warningsBox.appendChild(div);
-    }
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
-el("btn-refresh-preview").addEventListener("click", refreshPreview);
-
-el("btn-download").addEventListener("click", () => {
-  window.location.href = "/api/download";
-});
+// ---------- Sync ----------
 
 el("btn-run-now").addEventListener("click", async () => {
   const btn = el("btn-run-now");

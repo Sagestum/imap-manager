@@ -194,25 +194,6 @@ button.secondary:hover { color: var(--text); border-color: var(--text-dim); }
 button.danger { background: var(--danger); }
 button.danger:hover { background: var(--danger-hover); }
 
-pre#preview {
-  background: #0a0c10;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 1rem;
-  overflow-x: auto;
-  font-size: 0.85rem;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-#warnings {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  margin-bottom: 0.75rem;
-}
-
 .warning-item {
   background: rgba(230,184,0,0.12);
   border: 1px solid var(--warn);

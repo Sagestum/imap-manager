@@ -10,11 +10,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, request, render_template, send_file, abort
+from flask import Flask, jsonify, request, render_template, abort
 from werkzeug.exceptions import HTTPException
-import io
 
-from imapsync_gen import preview_lines, resolve_mappings, validate_config
+from imapsync_gen import resolve_mappings
 import stats_store
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -696,31 +695,6 @@ def delete_filter(filter_id):
         abort(404, description="Filter nicht gefunden.")
     save_config(config)
     return "", 204
-
-
-# ---------- Vorschau / Export ----------
-
-@app.route("/api/preview", methods=["GET"])
-def preview():
-    config = load_config()
-    lines, _mappings = preview_lines(config)
-    return jsonify({
-        "conf": "\n".join(lines),
-        "warnings": validate_config(config),
-    })
-
-
-@app.route("/api/download", methods=["GET"])
-def download():
-    config = load_config()
-    lines, _mappings = preview_lines(config)
-    buf = io.BytesIO(("\n".join(lines) + "\n").encode("utf-8"))
-    return send_file(
-        buf,
-        mimetype="text/plain",
-        as_attachment=True,
-        download_name="imapsync-plan.txt",
-    )
 
 
 RUN_CONFIG_DIR = Path(os.environ.get("FDM_CONFIG_DIR", str(BASE_DIR / "config")))
